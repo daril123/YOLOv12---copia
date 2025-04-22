@@ -1,1 +1,0 @@
-# YOLOv12---copia

@@ -324,7 +324,9 @@ def visualize_results_with_masks(image, classified_detections):
         'nucleo_esponjoso': (0, 0, 255),         # Rojo
         'estrella': (255, 0, 255),               # Magenta
         'rechupe': (128, 0, 128),                # Morado
-        'sopladura': (0, 128, 128)               # Verde-azulado
+        'sopladura': (0, 128, 128),              # Verde-azulado
+        'romboidad': (200, 200, 200),            # Gris claro
+        'abombamiento': (100, 100, 255)          # Rosa
     }
     
     # Dibujar cada tipo de defecto
@@ -333,8 +335,12 @@ def visualize_results_with_masks(image, classified_detections):
         
         for detection in detections:
             x1, y1, x2, y2 = detection['bbox']
-            conf = detection['conf']
-            cls = detection['class']
+            
+            # Obtener la confianza (con valor predeterminado si no existe)
+            conf = detection.get('conf', 1.0)
+            
+            # Obtener la clase (con valor predeterminado si no existe)
+            cls = detection.get('class', defect_type)
             
             # Si hay máscara, dibujar el contorno en lugar del rectángulo
             if 'mask' in detection and detection['mask'] is not None:
@@ -404,8 +410,15 @@ def visualize_results_with_masks(image, classified_detections):
                 cv2.rectangle(result_image, (x1, y1), (x2, y2), color, 2)
             
             # Añadir etiqueta con confianza y dirección si existe
-            if (defect_type in ['grietas_diagonales', 'grietas_medio_camino', 'grietas_corner']) and 'direccion' in detection:
+            label = ""
+            
+            # Para análisis geométrico, mostrar etiqueta especial
+            if defect_type in ['romboidad', 'abombamiento']:
+                label = f"{defect_type.capitalize()} (Análisis Geométrico)"
+            # Para grietas, incluir dirección si está disponible
+            elif (defect_type in ['grietas_diagonales', 'grietas_medio_camino', 'grietas_corner']) and 'direccion' in detection:
                 label = f"{defect_type.replace('_', ' ').title()} ({conf:.2f}) - {detection['direccion']}"
+            # Para el resto de defectos, mostrar tipo y confianza
             else:
                 label = f"{defect_type.replace('_', ' ').title()} ({conf:.2f})"
             

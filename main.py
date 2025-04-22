@@ -25,6 +25,8 @@ from defects.inclusion_no_metalica.processor import InclusionNoMetalicaProcessor
 from defects.rechupe.processor import RechupeProcessor
 from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
+from defects.abombamiento.processor import AbombamientoProcessor
+from defects.romboidad.processor import RomboidadProcessor
 
 
 def model_fn(model_dir=None):
@@ -64,6 +66,8 @@ def model_fn(model_dir=None):
     rechupe_processor = RechupeProcessor()
     estrella_processor = EstrellaProcessor()
     sopladura_processor = SopladuraProcessor()
+    abombamiento_processor = AbombamientoProcessor()
+    romboidad_processor = RomboidadProcessor()
     
     return {
         'vertex_detector': vertex_detector,
@@ -76,7 +80,9 @@ def model_fn(model_dir=None):
             'inclusion_no_metalica': inclusion_processor,
             'rechupe': rechupe_processor,
             'estrella': estrella_processor,
-            'sopladura': sopladura_processor
+            'sopladura': sopladura_processor,
+            'abombamiento': abombamiento_processor,
+            'romboidad': romboidad_processor
         }
     }
 
@@ -161,8 +167,29 @@ def predict_fn(input_data, models, output_dir=None):
     # 4. Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
     
+    # 5. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
+    abombamiento_processor = models['processors']['abombamiento']
+    abombamiento_results = abombamiento_processor.process(
+        image,
+        vertices,
+        image_name=image_name,
+        output_dir=output_dir
+    )
+    
+    # 6. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
+    romboidad_processor = models['processors']['romboidad']
+    romboidad_results = romboidad_processor.process(
+        image,
+        vertices,
+        image_name=image_name,
+        output_dir=output_dir
+    )
+    
     # Procesar cada tipo de defecto con su procesador específico
-    results = {}
+    results = {
+        'abombamiento': abombamiento_results,
+        'romboidad': romboidad_results
+    }
     
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
@@ -200,6 +227,9 @@ def output_fn(prediction_results, output_dir, input_data):
     Returns:
         Dictionary con las rutas donde se guardaron los resultados
     """
+    # Importar función para escribir archivos con codificación UTF-8
+    from utils.utils import safe_write_file
+    
     # Extraer información básica
     name = input_data['name']
     ext = input_data['ext']
@@ -269,6 +299,32 @@ def output_fn(prediction_results, output_dir, input_data):
                         output_paths[defect_type]['visualizations'] = {}
                     
                     output_paths[defect_type]['visualizations'][viz_name] = viz_path
+    
+    # Guardar resultados de análisis de propiedades geométricas (abombamiento y romboidad)
+    for property_type in ['abombamiento', 'romboidad']:
+        if property_type in prediction_results['processed_results']:
+            processed_results = prediction_results['processed_results'][property_type]
+            
+            # Los reportes ya deberían estar guardados en la ubicación correcta
+            if 'report_paths' in processed_results:
+                output_paths[f'{property_type}_reports'] = processed_results['report_paths']
+            
+            if 'visualizations' in processed_results:
+                # Crear directorio para este tipo de propiedad
+                property_dir = os.path.join(image_output_dir, property_type)
+                os.makedirs(property_dir, exist_ok=True)
+                
+                for viz_name, viz_img in processed_results['visualizations'].items():
+                    viz_path = os.path.join(property_dir, f"{name}_{property_type}_{viz_name}{ext}")
+                    cv2.imwrite(viz_path, viz_img)
+                    
+                    if property_type not in output_paths:
+                        output_paths[property_type] = {}
+                    
+                    if 'visualizations' not in output_paths[property_type]:
+                        output_paths[property_type]['visualizations'] = {}
+                    
+                    output_paths[property_type]['visualizations'][viz_name] = viz_path
     
     return output_paths
 

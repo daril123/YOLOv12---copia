@@ -158,6 +158,29 @@ def find_extreme_points(contour):
     
     return extreme_points[0], extreme_points[1], max_distance
 
+def safe_write_file(file_path, content, is_binary=False):
+    """
+    Escribe contenido en un archivo usando codificación UTF-8 para textos
+    
+    Args:
+        file_path: Ruta del archivo a escribir
+        content: Contenido a escribir
+        is_binary: Si es True, escribe en modo binario
+        
+    Returns:
+        bool: True si se escribió correctamente, False en caso de error
+    """
+    try:
+        mode = 'wb' if is_binary else 'w'
+        encoding = None if is_binary else 'utf-8'
+        
+        with open(file_path, mode, encoding=encoding) as f:
+            f.write(content)
+        return True
+    except Exception as e:
+        print(f"Error al escribir el archivo {file_path}: {e}")
+        return False
+
 def find_closest_edge_point(contour, edges):
     """
     Encuentra el punto del contorno que está más cerca de alguno de los bordes de la palanquilla

@@ -6,7 +6,8 @@ from .utils import (
     get_mask_center,
     draw_arrow,
     find_extreme_points,
-    find_closest_edge_point
+    find_closest_edge_point,
+    safe_write_file
 )
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     'get_mask_center',
     'draw_arrow',
     'find_extreme_points',
-    'find_closest_edge_point'
+    'find_closest_edge_point',
+    'safe_write_file'
 ]
