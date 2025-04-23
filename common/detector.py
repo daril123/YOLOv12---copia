@@ -12,6 +12,7 @@ def detect_palanquilla(image):
     Returns:
         corners: Lista de esquinas [top-left, top-right, bottom-right, bottom-left]
         success: True si se detectó correctamente, False en caso contrario
+        mask: Máscara de segmentación de la palanquilla
     """
     try:
         # Hacer una copia de la imagen
@@ -46,6 +47,9 @@ def detect_palanquilla(image):
             kernel = np.ones((3, 3), np.uint8)
             edges = cv2.dilate(edges, kernel, iterations=1)
             contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Actualizar la máscara a la obtenida con Canny
+            thresh_cleaned = edges
         
         # Ordenar contornos por área
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
@@ -53,6 +57,10 @@ def detect_palanquilla(image):
         # Tomar el contorno más grande (debería ser la palanquilla)
         if contours:
             largest_contour = contours[0]
+            
+            # Crear una máscara solo con el contorno principal
+            palanquilla_mask = np.zeros_like(thresh_cleaned)
+            cv2.drawContours(palanquilla_mask, [largest_contour], 0, 255, -1)
             
             # Aproximar el contorno a un polígono
             epsilon = 0.02 * cv2.arcLength(largest_contour, True)
@@ -64,7 +72,7 @@ def detect_palanquilla(image):
                 
                 # Ordenar las esquinas [top-left, top-right, bottom-right, bottom-left]
                 corners = order_points(corners)
-                return corners, True
+                return corners, True, palanquilla_mask
             
             # Si no se obtuvo un cuadrilátero, usar el rectángulo mínimo
             rect = cv2.minAreaRect(largest_contour)
@@ -73,19 +81,19 @@ def detect_palanquilla(image):
             
             # Ordenar las esquinas [top-left, top-right, bottom-right, bottom-left]
             corners = order_points(box)
-            return corners, True
+            return corners, True, palanquilla_mask
         
         # Si todo falla, usar los bordes de la imagen
         h, w = image.shape[:2]
         corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]], dtype="int")
-        return corners, False
+        return corners, False, None
         
     except Exception as e:
         print(f"Error en detect_palanquilla: {e}")
         # Retornar los bordes de la imagen
         h, w = image.shape[:2]
         corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]], dtype="int")
-        return corners, False
+        return corners, False, None
 
 def analizar_direccion_grieta_mask(mask):
     """

@@ -46,17 +46,18 @@ class VertexDetector:
         Returns:
             vertices: Array con las coordenadas de los 4 vértices ordenados
             success: True si se detectó correctamente, False en caso contrario
+            mask: Máscara de segmentación de la palanquilla
         """
         if self.model is None:
             print("Error: Modelo YOLO de vértices no cargado")
-            return None, False
+            return None, False, None
         
         try:
             # Cargar la imagen
             image = cv2.imread(image_path)
             if image is None:
                 print(f"Error al cargar la imagen: {image_path}")
-                return None, False
+                return None, False, None
             
             # Se utiliza copyMakeBorder para ampliar la imagen con un borde con color
             image_padded = cv2.copyMakeBorder(image, self.padding, self.padding, self.padding, self.padding, 
@@ -68,7 +69,7 @@ class VertexDetector:
             # Verificar si se detectaron máscaras
             if resultado.masks is None:
                 print("No se detectaron máscaras en la imagen.")
-                return None, False
+                return None, False, None
             
             # Obtener las máscaras binarias
             mask_img = resultado.masks.data.cpu().numpy()
@@ -85,7 +86,7 @@ class VertexDetector:
             contornos, _ = cv2.findContours(mask_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not contornos:
                 print("No se encontraron contornos en la máscara.")
-                return None, False
+                return None, False, None
             
             # Seleccionar el contorno principal
             contorno_principal = max(contornos, key=cv2.contourArea)
@@ -103,7 +104,7 @@ class VertexDetector:
             contornos_final, _ = cv2.findContours(mask_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not contornos_final:
                 print("No se encontraron contornos en la máscara final.")
-                return None, False
+                return None, False, None
             
             # Seleccionar el contorno principal
             contorno_principal = max(contornos_final, key=cv2.contourArea)
@@ -146,13 +147,16 @@ class VertexDetector:
             # Ajustar las coordenadas para compensar el padding
             vertices = vertices - self.padding
             
-            return vertices, True
+            # Recortar la máscara final para eliminar el padding y ajustarla a la imagen original
+            mask_final_original = mask_final[self.padding:-self.padding, self.padding:-self.padding]
+            
+            return vertices, True, mask_final_original
             
         except Exception as e:
             print(f"Error en detect_vertices: {e}")
             import traceback
             traceback.print_exc()
-            return None, False
+            return None, False, None
     
     def visualize_vertices(self, image_path, vertices, output_path=None):
         """

@@ -142,16 +142,18 @@ def predict_fn(input_data, models, output_dir=None):
     
     # 1. Detectar vértices de la palanquilla
     print(f"Detectando vértices en: {image_path}")
-    vertices, success = vertex_detector.detect_vertices(image_path)
+    vertices, success, palanquilla_mask = vertex_detector.detect_vertices(image_path)
     
     if not success:
         print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
         # Usar un método alternativo para detectar los vértices
         from common.detector import detect_palanquilla
-        vertices, success = detect_palanquilla(image)
+        vertices, success, palanquilla_mask = detect_palanquilla(image)
         
         if not success:
             print("Error: También falló el método alternativo. Usando toda la imagen.")
+            # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
+            palanquilla_mask = None
     
     # 2. Generar máscaras de zona con los vértices detectados
     print(f"Generando máscaras de zonas")
@@ -173,7 +175,8 @@ def predict_fn(input_data, models, output_dir=None):
         image,
         vertices,
         image_name=image_name,
-        output_dir=output_dir
+        output_dir=output_dir,
+        mask=palanquilla_mask
     )
     
     # 6. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
@@ -211,7 +214,8 @@ def predict_fn(input_data, models, output_dir=None):
         'detections': detections,
         'yolo_result': yolo_result,
         'classified_detections': classified_detections,
-        'processed_results': results
+        'processed_results': results,
+        'palanquilla_mask': palanquilla_mask  # Añadimos la máscara a los resultados
     }
 
 
@@ -263,6 +267,12 @@ def output_fn(prediction_results, output_dir, input_data):
     vertices_path = os.path.join(image_output_dir, f"{name}_vertices{ext}")
     cv2.imwrite(vertices_path, vertices_img)
     output_paths['vertices_img'] = vertices_path
+    
+    # Guardar la máscara de la palanquilla si existe
+    if 'palanquilla_mask' in prediction_results and prediction_results['palanquilla_mask'] is not None:
+        mask_path = os.path.join(image_output_dir, f"{name}_palanquilla_mask.png")
+        cv2.imwrite(mask_path, prediction_results['palanquilla_mask'])
+        output_paths['palanquilla_mask'] = mask_path
     
     # Guardar imagen con todos los defectos detectados
     result_image = visualize_results_with_masks(image, prediction_results['classified_detections'])
