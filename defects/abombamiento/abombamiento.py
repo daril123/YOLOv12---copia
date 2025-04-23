@@ -96,6 +96,9 @@ def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
     if contorno is None or contorno_principal is None:
         print("Error: Contornos no válidos para determinar el lado más recto.")
         return "Lado 1 (Top)"  # Valor predeterminado
+    
+    # Asegurar que contorno es un array numpy
+    contorno = np.array(contorno)
         
     # Definir los lados de la caja (pares de vértices consecutivos)
     lados = [
@@ -127,8 +130,8 @@ def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
         puntos_lado = np.array(puntos_por_lado[i]) if puntos_por_lado[i] else np.array([])
         if len(puntos_lado) > 0:
             distancias = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
-            abombamiento = np.max(distancias)
-            punto_max = puntos_lado[np.argmax(distancias)]
+            abombamiento = np.max(distancias) if len(distancias) > 0 else 0
+            punto_max = puntos_lado[np.argmax(distancias)] if len(distancias) > 0 else None
         else:
             abombamiento = 0
             punto_max = None
@@ -137,10 +140,13 @@ def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
         print(f"{nombre}: abombamiento = {abombamiento:.2f}")
 
     # Se determina el lado más recto (el de menor abombamiento)
-    indice_recto = np.argmin(abombamientos)
-    lado_recto_info = lados[indice_recto]
-    print("El lado más recto es:", lado_recto_info[2])
-    return lado_recto_info[2]
+    if len(abombamientos) > 0:
+        indice_recto = np.argmin(abombamientos)
+        lado_recto_info = lados[indice_recto]
+        print("El lado más recto es:", lado_recto_info[2])
+        return lado_recto_info[2]
+    else:
+        return "Lado 1 (Top)"  # Valor predeterminado si no hay datos
 
 def obtener_abombamiento(contorno, contorno_principal):
     """
@@ -163,6 +169,9 @@ def obtener_abombamiento(contorno, contorno_principal):
         print("Error: Contornos inválidos para calcular abombamiento")
         # Retornar valores por defecto
         return 0.0, 0.0, "Lado 1 (Top)", None, {}
+    
+    # Convertir contorno a array numpy si no lo es ya
+    contorno = np.array(contorno)
         
     try:
         lados = {
@@ -254,7 +263,8 @@ def obtener_abombamiento(contorno, contorno_principal):
         
         # Identificar el lado con mayor abombamiento (según porcentaje)
         if abombamientos_porcentuales:
-            lado_max = max(abombamientos_porcentuales, key=abombamientos_porcentuales.get)
+            # Buscar el lado con el valor máximo de abombamiento porcentual
+            lado_max = max(abombamientos_porcentuales.items(), key=lambda x: x[1])[0]
             max_abombamiento_pix = abombamientos_pixeles[lado_max]
             max_porcentaje = abombamientos_porcentuales[lado_max]
         else:
@@ -296,71 +306,91 @@ def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=No
     Returns:
         Imagen con visualización del abombamiento
     """
-    # Obtener los datos de abombamiento
-    _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
-    
-    # Crear una copia de la imagen para no modificar la original
-    img_resultado = image.copy()
-    
-    # Dibujar el contorno de la palanquilla
-    pts = contorno.reshape((-1, 1, 2)).astype(np.int32)
-    cv2.polylines(img_resultado, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
-    
-    # Colores para cada lado (BGR)
-    colores = {
-        "Lado 1 (Top)": (255, 0, 0),      # Azul
-        "Lado 2 (Right)": (0, 255, 0),    # Verde
-        "Lado 3 (Bottom)": (0, 0, 255),   # Rojo
-        "Lado 4 (Left)": (0, 255, 255)    # Amarillo
-    }
-    
-    # Para cada lado, dibujar la línea nominal y la línea de abombamiento
-    for lado, datos in abombamientos_por_lado.items():
-        p1, p2 = datos['vertices']
-        p1 = tuple(np.array(p1).astype(int))
-        p2 = tuple(np.array(p2).astype(int))
+    try:
+        # Verificar entradas
+        if image is None or contorno is None or contorno_principal is None:
+            print("Error: Entrada inválida para visualizar abombamiento")
+            if image is not None:
+                return image.copy()
+            return None
+            
+        # Convertir contorno a array numpy si no lo es ya
+        contorno = np.array(contorno)
+            
+        # Obtener los datos de abombamiento
+        _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
         
-        # Dibujar la línea nominal
-        cv2.line(img_resultado, p1, p2, colores[lado], 2)
+        # Crear una copia de la imagen para no modificar la original
+        img_resultado = image.copy()
         
-        # Si hay punto de máximo abombamiento, dibujarlo
-        if datos['punto_max'] is not None and datos['proyeccion'] is not None:
-            punto_max = tuple(np.array(datos['punto_max']).astype(int))
-            proyeccion = tuple(np.array(datos['proyeccion']).astype(int))
+        # Dibujar el contorno de la palanquilla
+        pts = contorno.reshape((-1, 1, 2)).astype(np.int32)
+        cv2.polylines(img_resultado, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+        
+        # Colores para cada lado (BGR)
+        colores = {
+            "Lado 1 (Top)": (255, 0, 0),      # Azul
+            "Lado 2 (Right)": (0, 255, 0),    # Verde
+            "Lado 3 (Bottom)": (0, 0, 255),   # Rojo
+            "Lado 4 (Left)": (0, 255, 255)    # Amarillo
+        }
+        
+        # Para cada lado, dibujar la línea nominal y la línea de abombamiento
+        for lado, datos in abombamientos_por_lado.items():
+            p1, p2 = datos['vertices']
             
-            # Dibujar línea de abombamiento
-            cv2.line(img_resultado, punto_max, proyeccion, (0, 0, 255), 2)
+            # Verificar que ambos puntos sean válidos
+            if p1 is None or p2 is None:
+                continue
+                
+            p1 = tuple(np.array(p1).astype(int))
+            p2 = tuple(np.array(p2).astype(int))
             
-            # Dibujar puntos
-            cv2.circle(img_resultado, punto_max, 5, (0, 0, 255), -1)
-            cv2.circle(img_resultado, proyeccion, 5, (0, 255, 255), -1)
+            # Dibujar la línea nominal
+            cv2.line(img_resultado, p1, p2, colores[lado], 2)
             
-            # Añadir etiqueta con valor
-            abombamiento_px = datos['abombamiento_px']
-            abombamiento_porcentaje = datos['abombamiento_porcentaje']
-            texto = f"{abombamiento_px:.1f}px ({abombamiento_porcentaje:.1f}%)"
-            
-            # Posición de la etiqueta (ajustar según la posición del punto)
-            pos_x = (punto_max[0] + proyeccion[0]) // 2
-            pos_y = (punto_max[1] + proyeccion[1]) // 2
-            
-            # Añadir fondo negro para mejor visibilidad
-            (text_width, text_height), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-            cv2.rectangle(img_resultado, 
-                         (pos_x - 5, pos_y - text_height - 5), 
-                         (pos_x + text_width + 5, pos_y + 5), 
-                         (0, 0, 0), -1)
-            
-            # Añadir texto
-            cv2.putText(img_resultado, texto, (pos_x, pos_y), 
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    
-    # Guardar la imagen si se proporciona una ruta
-    if guardar_path:
-        cv2.imwrite(guardar_path, img_resultado)
-        print(f"Imagen guardada en: {guardar_path}")
-    
-    return img_resultado
+            # Si hay punto de máximo abombamiento, dibujarlo
+            if datos['punto_max'] is not None and datos['proyeccion'] is not None:
+                punto_max = tuple(np.array(datos['punto_max']).astype(int))
+                proyeccion = tuple(np.array(datos['proyeccion']).astype(int))
+                
+                # Dibujar línea de abombamiento
+                cv2.line(img_resultado, punto_max, proyeccion, (0, 0, 255), 2)
+                
+                # Dibujar puntos
+                cv2.circle(img_resultado, punto_max, 5, (0, 0, 255), -1)
+                cv2.circle(img_resultado, proyeccion, 5, (0, 255, 255), -1)
+                
+                # Añadir etiqueta con valor
+                abombamiento_px = datos['abombamiento_px']
+                abombamiento_porcentaje = datos['abombamiento_porcentaje']
+                texto = f"{abombamiento_px:.1f}px ({abombamiento_porcentaje:.1f}%)"
+                
+                # Posición de la etiqueta (ajustar según la posición del punto)
+                pos_x = (punto_max[0] + proyeccion[0]) // 2
+                pos_y = (punto_max[1] + proyeccion[1]) // 2
+                
+                # Añadir fondo negro para mejor visibilidad
+                (text_width, text_height), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                cv2.rectangle(img_resultado, 
+                             (pos_x - 5, pos_y - text_height - 5), 
+                             (pos_x + text_width + 5, pos_y + 5), 
+                             (0, 0, 0), -1)
+                
+                # Añadir texto
+                cv2.putText(img_resultado, texto, (pos_x, pos_y), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        
+        # Guardar la imagen si se proporciona una ruta
+        if guardar_path:
+            cv2.imwrite(guardar_path, img_resultado)
+            print(f"Imagen guardada en: {guardar_path}")
+        
+        return img_resultado
+    except Exception as e:
+        print(f"Error al visualizar abombamiento: {e}")
+        # Devolver la imagen original en caso de error
+        return image.copy() if image is not None else None
 
 def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0):
     """
@@ -375,31 +405,49 @@ def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0)
     Returns:
         Un diccionario con los resultados del abombamiento para cada lado
     """
-    # Obtener datos de abombamiento
-    _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
-    
-    # Crear diccionario de resultados
-    resultados = {}
-    
-    for lado, datos in abombamientos_por_lado.items():
-        # X es el valor de abombamiento en píxeles
-        X_px = datos['abombamiento_px']
-        X_mm = X_px * factor_mm_px
+    try:
+        # Verificar entradas
+        if contorno is None or contorno_principal is None:
+            print("Error: Entrada inválida para calcular abombamiento")
+            return {}
+            
+        # Convertir contorno a array numpy si no lo es ya
+        contorno = np.array(contorno)
+            
+        # Obtener datos de abombamiento
+        _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
         
-        # Longitud nominal del lado
-        p1, p2 = datos['vertices']
-        L_px = np.linalg.norm(np.array(p1) - np.array(p2))
-        L_mm = L_px * factor_mm_px
+        # Crear diccionario de resultados
+        resultados = {}
         
-        # Calcular C según la fórmula C = X / L * 100
-        C = X_mm / L_mm * 100 if L_mm > 0 else 0
+        for lado, datos in abombamientos_por_lado.items():
+            # X es el valor de abombamiento en píxeles
+            X_px = datos['abombamiento_px']
+            X_mm = X_px * factor_mm_px
+            
+            # Longitud nominal del lado
+            p1, p2 = datos['vertices']
+            
+            # Verificar que los vértices sean válidos
+            if p1 is None or p2 is None:
+                L_px = 1.0  # Evitar división por cero
+                L_mm = 1.0
+            else:
+                L_px = np.linalg.norm(np.array(p1) - np.array(p2))
+                L_mm = L_px * factor_mm_px
+            
+            # Calcular C según la fórmula C = X / L * 100
+            C = X_mm / L_mm * 100 if L_mm > 0 else 0
+            
+            resultados[lado] = {
+                'X_mm': X_mm,
+                'L_mm': L_mm,
+                'C_porcentaje': C,
+                'X_px': X_px,
+                'L_px': L_px
+            }
         
-        resultados[lado] = {
-            'X_mm': X_mm,
-            'L_mm': L_mm,
-            'C_porcentaje': C,
-            'X_px': X_px,
-            'L_px': L_px
-        }
-    
-    return resultados
+        return resultados
+    except Exception as e:
+        print(f"Error al calcular abombamiento: {e}")
+        return {}

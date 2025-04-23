@@ -127,58 +127,67 @@ def rotar_imagen_lado(image, lado_rotar, contorno):
     Returns:
         Imagen rotada
     """
-    # Calcular los ángulos según cada lado
-    # Para cada lado se calcula la diferencia entre dos puntos y se obtiene
-    # el ángulo entre el vector resultante y el eje de referencia.
-    # Los ángulos se calcularán en grados y se toman valores absolutos para ver
-    # la desviación con respecto a la horizontal (Top/Bottom) o vertical (Left/Right).
-    angulos_rotacion_base = {"Lado 1 (Top)": 180, "Lado 2 (Right)": 270, "Lado 3 (Bottom)": 180, "Lado 4 (Left)": 270}
-    angles = {}  # Diccionario para almacenar los ángulos con su etiqueta
-    
-    # Lado 1 (Top): ángulo entre el lado (punto0 -> punto1) y la horizontal (eje X).
-    vec_top = contorno[1] - contorno[0]
-    angle_top = np.degrees(np.arctan2(vec_top[1], vec_top[0]))
-    angles["Lado 1 (Top)"] = angle_top
-    
-    # Lado 2 (Right): ángulo entre el lado (punto1 -> punto2) y la vertical (eje Y).
-    vec_right = contorno[2] - contorno[1]
-    # Se invierte el orden de los componentes para comparar con la vertical:
-    angle_right = np.degrees(np.arctan2(vec_right[0], vec_right[1]))
-    angles["Lado 2 (Right)"] = angle_right
-    
-    # Lado 3 (Bottom): ángulo entre el lado (punto2 -> punto3) y la horizontal.
-    vec_bottom = contorno[3] - contorno[2]
-    angle_bottom = np.degrees(np.arctan2(vec_bottom[1], vec_bottom[0]))
-    angles["Lado 3 (Bottom)"] = angle_bottom
-    
-    # Lado 4 (Left): se calcula usando el vector desde bottom-left hasta top-left:
-    # es decir, vector = top-left - bottom-left.
-    # En nuestro orden, top-left es contorno[0] y bottom-left es contorno[3].
-    vec_left = contorno[0] - contorno[3]
-    angle_left = np.degrees(np.arctan2(vec_left[0], vec_left[1]))
-    angles["Lado 4 (Left)"] = angle_left
-    
-    # Mostrar los ángulos calculados en consola
-    for lado, ang in angles.items():
-        print(f"{lado}: {ang:.2f} grados")
-    
-    # Rotar en base al ángulo del lado especificado
-    angulo_lado = angles[lado_rotar]
-    print("Lado a rotar: ", lado_rotar)
-    print("Ángulo del lado a rotar:", angulo_lado)
-    rotation_angle = -angulo_lado + angulos_rotacion_base[lado_rotar]
-    print("Ángulo de rotación necesario:", rotation_angle)
-    
-    # Rotar la imagen usando OpenCV
-    # Se rota la imagen alrededor de su centro.
-    (h, w) = image.shape[:2]
-    center = (w // 2, h // 2)
-    # Se obtiene la matriz de rotación:
-    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
-    # Se aplica la transformación a la imagen
-    image_rotada = cv2.warpAffine(image, M, (w, h))
-    
-    return image_rotada
+    try:
+        # Calcular los ángulos según cada lado
+        # Para cada lado se calcula la diferencia entre dos puntos y se obtiene
+        # el ángulo entre el vector resultante y el eje de referencia.
+        # Los ángulos se calcularán en grados y se toman valores absolutos para ver
+        # la desviación con respecto a la horizontal (Top/Bottom) o vertical (Left/Right).
+        angulos_rotacion_base = {"Lado 1 (Top)": 180, "Lado 2 (Right)": 270, "Lado 3 (Bottom)": 180, "Lado 4 (Left)": 270}
+        angles = {}  # Diccionario para almacenar los ángulos con su etiqueta
+        
+        # Verificar que contorno sea un array numpy y convertir si es necesario
+        contorno = np.array(contorno)
+        
+        # Lado 1 (Top): ángulo entre el lado (punto0 -> punto1) y la horizontal (eje X).
+        vec_top = contorno[1] - contorno[0]
+        angle_top = np.degrees(np.arctan2(vec_top[1], vec_top[0]))
+        angles["Lado 1 (Top)"] = angle_top
+        
+        # Lado 2 (Right): ángulo entre el lado (punto1 -> punto2) y la vertical (eje Y).
+        vec_right = contorno[2] - contorno[1]
+        # Se invierte el orden de los componentes para comparar con la vertical:
+        angle_right = np.degrees(np.arctan2(vec_right[0], vec_right[1]))
+        angles["Lado 2 (Right)"] = angle_right
+        
+        # Lado 3 (Bottom): ángulo entre el lado (punto2 -> punto3) y la horizontal.
+        vec_bottom = contorno[3] - contorno[2]
+        angle_bottom = np.degrees(np.arctan2(vec_bottom[1], vec_bottom[0]))
+        angles["Lado 3 (Bottom)"] = angle_bottom
+        
+        # Lado 4 (Left): se calcula usando el vector desde bottom-left hasta top-left:
+        # es decir, vector = top-left - bottom-left.
+        # En nuestro orden, top-left es contorno[0] y bottom-left es contorno[3].
+        vec_left = contorno[0] - contorno[3]
+        angle_left = np.degrees(np.arctan2(vec_left[0], vec_left[1]))
+        angles["Lado 4 (Left)"] = angle_left
+        
+        # Mostrar los ángulos calculados en consola
+        for lado, ang in angles.items():
+            print(f"{lado}: {ang:.2f} grados")
+        
+        # Rotar en base al ángulo del lado especificado
+        angulo_lado = angles[lado_rotar]
+        print("Lado a rotar: ", lado_rotar)
+        print("Ángulo del lado a rotar:", angulo_lado)
+        rotation_angle = -angulo_lado + angulos_rotacion_base[lado_rotar]
+        print("Ángulo de rotación necesario:", rotation_angle)
+        
+        # Rotar la imagen usando OpenCV
+        # Se rota la imagen alrededor de su centro.
+        (h, w) = image.shape[:2]
+        center = (w // 2, h // 2)
+        # Se obtiene la matriz de rotación:
+        M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+        # Se aplica la transformación a la imagen
+        image_rotada = cv2.warpAffine(image, M, (w, h))
+        
+        return image_rotada
+    except Exception as e:
+        print(f"Error al rotar la imagen: {e}")
+        import traceback
+        traceback.print_exc()
+        return image  # Devolver la imagen original en caso de error
 
 def redimensionar_imagen(imagen, alto_deseado=1000, padding=20):
     """
