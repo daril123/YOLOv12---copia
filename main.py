@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import cv2
 import numpy as np
+import torch
 
 # Configuración de rutas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,6 +16,7 @@ from models.defect_detector import DefectDetector
 from common.zone_generator import visualize_zones
 from common.defect_classifier import classify_defects_with_masks, visualize_results_with_masks
 from utils.utils import order_points
+from utils.contorno import obtener_contorno_imagen, rotar_imagen_lado, redimensionar_recortar_palanquilla
 
 # Importar procesadores de defectos específicos
 from defects.diagonal_crack.processor import DiagonalCrackProcessor
@@ -140,46 +142,84 @@ def predict_fn(input_data, models, output_dir=None):
     vertex_detector = models['vertex_detector']
     defect_detector = models['defect_detector']
     
-    # 1. Detectar vértices de la palanquilla
-    print(f"Detectando vértices en: {image_path}")
-    vertices, success, palanquilla_mask = vertex_detector.detect_vertices(image_path)
+    # 1. Preprocesar la imagen (redimensionar y recortar)
+    print(f"Preprocesando imagen: {image_path}")
+    image = redimensionar_recortar_palanquilla(image, defect_detector.model, defect_detector.conf_threshold)
     
-    if not success:
+    # 2. Detectar vértices de la palanquilla
+    print(f"Detectando vértices en: {image_path}")
+    vertices, success, palanquilla_mask = obtener_contorno_imagen(image, defect_detector.model, defect_detector.conf_threshold)
+    
+    if not success or vertices is None:
         print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
         # Usar un método alternativo para detectar los vértices
         from common.detector import detect_palanquilla
         vertices, success, palanquilla_mask = detect_palanquilla(image)
         
-        if not success:
+        if not success or vertices is None:
             print("Error: También falló el método alternativo. Usando toda la imagen.")
             # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
+            h, w = image.shape[:2]
+            vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
             palanquilla_mask = None
     
-    # 2. Generar máscaras de zona con los vértices detectados
+    # 3. Rotar imagen para alinear con el lado más recto
+    print(f"Rotando imagen para alinear palanquilla")
+    try:
+        # Determinar lado más recto para rotación
+        if vertices is not None and success:
+            contorno_aux, contorno_principal, _ = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
+            
+            if contorno_aux is not None and contorno_principal is not None:
+                # Importar módulo de abombamiento para determinar el lado más recto
+                from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
+                lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_principal)
+                
+                # Rotar la imagen
+                image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
+                
+                # Actualizar la imagen y detectar los nuevos vértices
+                image = image_rotada
+                vertices_aux, success_aux, palanquilla_mask_aux = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
+                
+                if success_aux and vertices_aux is not None:
+                    vertices = vertices_aux
+                    palanquilla_mask = palanquilla_mask_aux
+                else:
+                    print("Error: No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
+        else:
+            print("No se pudo rotar la imagen: vértices no disponibles.")
+    except Exception as e:
+        print(f"Error al rotar la imagen: {e}")
+    
+    # 4. Generar máscaras de zona con los vértices detectados
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
-    # 3. Detectar defectos con el detector de defectos
+    # 5. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
     
     if not detections:
         print("No se detectaron defectos en esta imagen.")
-        
-    # 4. Clasificar los defectos según su posición en las zonas
+    
+    # 6. Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
     
-    # 5. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
+    # 7. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
+    # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
         image,
         vertices,
         image_name=image_name,
         output_dir=output_dir,
+        model=vertex_detector.model,  # Usando el modelo de vértices/máscara
+        conf_threshold=0.5,  # Valor típico para detección de máscaras
         mask=palanquilla_mask
     )
     
-    # 6. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
+    # 8. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,
@@ -215,7 +255,8 @@ def predict_fn(input_data, models, output_dir=None):
         'yolo_result': yolo_result,
         'classified_detections': classified_detections,
         'processed_results': results,
-        'palanquilla_mask': palanquilla_mask  # Añadimos la máscara a los resultados
+        'palanquilla_mask': palanquilla_mask,
+        'image_procesada': image
     }
 
 
@@ -253,7 +294,7 @@ def output_fn(prediction_results, output_dir, input_data):
     
     # Guardar visualización de vértices
     vertices = prediction_results['vertices']
-    vertices_img = image.copy()
+    vertices_img = prediction_results['image_procesada'].copy()
     
     # Dibujar el polígono formado por los vértices
     cv2.polylines(vertices_img, [vertices], True, (0, 255, 0), 3)
@@ -275,7 +316,10 @@ def output_fn(prediction_results, output_dir, input_data):
         output_paths['palanquilla_mask'] = mask_path
     
     # Guardar imagen con todos los defectos detectados
-    result_image = visualize_results_with_masks(image, prediction_results['classified_detections'])
+    result_image = visualize_results_with_masks(
+        prediction_results['image_procesada'], 
+        prediction_results['classified_detections']
+    )
     result_path = os.path.join(image_output_dir, f"{name}_resultado{ext}")
     cv2.imwrite(result_path, result_image)
     output_paths['result_img'] = result_path
