@@ -14,7 +14,7 @@ class AbombamientoProcessor:
         """
         self.name = "abombamiento"
     
-    def measure_abombamiento(self, image, corners, visualize=True):
+    def measure_abombamiento(self, image, corners, visualize=True, mask=None):
         """
         Mide el abombamiento (concavidad/convexidad) de la palanquilla utilizando
         los bordes de la palanquilla como referencia, no los bordes de la imagen.
@@ -23,6 +23,7 @@ class AbombamientoProcessor:
             image: Imagen original
             corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left]
             visualize: Si es True, genera una visualización
+            mask: Máscara de segmentación de la palanquilla (opcional)
             
         Returns:
             metrics: Diccionario con las métricas de abombamiento para cada lado
@@ -31,10 +32,10 @@ class AbombamientoProcessor:
         viz_img = image.copy() if visualize else None
         
         # Definir colores para visualización (BGR)
-        colors = [(0, 0, 255),   # Rojo
-                 (0, 255, 255),  # Amarillo
-                 (0, 255, 0),    # Verde
-                 (255, 0, 0)]    # Azul
+        colors = [(0, 0, 255),   # Rojo - Superior
+                 (0, 255, 255),  # Amarillo - Derecho
+                 (0, 255, 0),    # Verde - Inferior
+                 (255, 0, 0)]    # Azul - Izquierdo
         
         # Nombres de los lados
         side_names = ["Superior", "Derecho", "Inferior", "Izquierdo"]
@@ -64,8 +65,23 @@ class AbombamientoProcessor:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
         
         # Crear una máscara binaria de la palanquilla
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(mask, [corners_np], 255)
+        if mask is None:
+            mask = np.zeros(image.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(mask, [corners_np], 255)
+        
+        # Extraer el contorno de la palanquilla usando la máscara
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        
+        # Debe haber al menos un contorno
+        if not contours:
+            print("No se encontraron contornos en la máscara de la palanquilla")
+            return {
+                'resultados': {},
+                'visualization': viz_img if visualize else None
+            }
+        
+        # Tomar el contorno más grande (debe ser la palanquilla)
+        contour = max(contours, key=cv2.contourArea)
         
         # Procesar cada lado de la palanquilla
         for i in range(4):
@@ -79,24 +95,27 @@ class AbombamientoProcessor:
             # Calcular la longitud nominal del lado (distancia entre esquinas)
             nominal_length = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
             
-            # Encontrar la desviación máxima para este lado
-            # Usando solo el contorno de la palanquilla, no toda la imagen
-            
-            # Extraer el contorno de la palanquilla
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            contour = contours[0]  # Debe haber solo un contorno externo
-            
             # Vector unitario perpendicular al lado
             dx = p2[0] - p1[0]
             dy = p2[1] - p1[1]
             length = np.sqrt(dx**2 + dy**2)
             
-            # Vector perpendicular (rotación de 90 grados)
-            perpendicular = (-dy/length, dx/length)
+            # Vector perpendicular (rotación de 90 grados hacia adentro)
+            # Asegurar que el vector apunte hacia el interior de la palanquilla
+            nx, ny = -dy/length, dx/length
             
-            # Calcular abombamiento máximo
+            # Verificar que el vector perpendicular apunte hacia el centro
+            mid_to_center = np.array([center[0] - mid_point[0], center[1] - mid_point[1]])
+            dot_product = nx * mid_to_center[0] + ny * mid_to_center[1]
+            
+            # Si el producto punto es negativo, el vector apunta hacia afuera, invertirlo
+            if dot_product < 0:
+                nx, ny = -nx, -ny
+            
+            # Encontrar el punto de máxima desviación para este lado
             max_deviation = 0
             max_dev_point = None
+            proj_point = None
             
             # Comprobar cada punto del contorno para este lado
             for point in contour[:, 0, :]:
@@ -106,25 +125,33 @@ class AbombamientoProcessor:
                 x1, y1 = p1
                 x2, y2 = p2
                 
-                # Proyección del punto en la línea
-                t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / (nominal_length ** 2)
+                # Proyección del punto en la línea (parámetro t de 0 a 1)
+                t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / (nominal_length ** 2)))
                 
-                # Si t está entre 0 y 1, el punto se proyecta en el segmento
-                if 0 <= t <= 1:
-                    # Punto proyectado
-                    proj_x = x1 + t * (x2 - x1)
-                    proj_y = y1 + t * (y2 - y1)
-                    
-                    # Distancia entre el punto y su proyección
-                    dev = np.sqrt((px - proj_x)**2 + (py - proj_y)**2)
-                    
-                    # Si es el punto medio del lado aproximadamente
-                    if abs(t - 0.5) < 0.1:  # Cerca del punto medio del lado
-                        # Verificar si esta desviación es mayor que la máxima encontrada
-                        if dev > max_deviation:
-                            max_deviation = dev
-                            max_dev_point = (int(px), int(py))
-                            proj_point = (int(proj_x), int(proj_y))
+                # Punto proyectado en el segmento
+                proj_x = x1 + t * (x2 - x1)
+                proj_y = y1 + t * (y2 - y1)
+                
+                # Distancia entre el punto y su proyección
+                dev = np.sqrt((px - proj_x)**2 + (py - proj_y)**2)
+                
+                # Determinar si la desviación es hacia adentro o hacia afuera
+                # Vector desde proyección al punto contorno
+                vx, vy = px - proj_x, py - proj_y
+                
+                # Producto punto con el vector normal
+                dot = vx * nx + vy * ny
+                
+                # Si el producto punto es positivo, la desviación es hacia el interior
+                # Si es negativo, es hacia el exterior
+                signed_dev = dev if dot >= 0 else -dev
+                
+                # Buscar puntos cerca del punto medio (t cercano a 0.5)
+                # y actualizar si encontramos una desviación mayor
+                if abs(t - 0.5) < 0.1 and abs(signed_dev) > abs(max_deviation):
+                    max_deviation = signed_dev
+                    max_dev_point = (int(px), int(py))
+                    proj_point = (int(proj_x), int(proj_y))
             
             # Calcular el porcentaje de abombamiento (C)
             C = (max_deviation / nominal_length) * 100.0
@@ -136,31 +163,30 @@ class AbombamientoProcessor:
                 'nominal': round(nominal_length, 2),
                 'mid_point': mid_point,
                 'max_dev_point': max_dev_point,
-                'proj_point': proj_point if 'proj_point' in locals() else None
+                'proj_point': proj_point
             }
             
-            if visualize and max_dev_point:
+            if visualize and max_dev_point and proj_point:
                 # Dibujar el punto medio del lado
                 cv2.circle(viz_img, mid_point, 6, colors[i], -1)
                 
                 # Dibujar el punto de máxima desviación y la línea al punto proyectado
                 cv2.circle(viz_img, max_dev_point, 6, colors[i], -1)
                 
-                if 'proj_point' in locals() and proj_point:
-                    # Dibujar la línea que muestra la desviación
-                    cv2.line(viz_img, max_dev_point, proj_point, colors[i], 2)
-                    
-                    # Anotar el valor del abombamiento
-                    label_point = ((max_dev_point[0] + proj_point[0]) // 2, 
-                                  (max_dev_point[1] + proj_point[1]) // 2)
-                    
-                    cv2.putText(viz_img, f"X={max_deviation:.2f}", 
-                               (label_point[0] + 10, label_point[1]), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[i], 2)
-                    
-                    cv2.putText(viz_img, f"C={C:.2f}%", 
-                               (label_point[0] + 10, label_point[1] + 25), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[i], 2)
+                # Dibujar la línea que muestra la desviación (X)
+                cv2.line(viz_img, max_dev_point, proj_point, colors[i], 2)
+                
+                # Anotar el valor del abombamiento
+                label_point = ((max_dev_point[0] + proj_point[0]) // 2, 
+                              (max_dev_point[1] + proj_point[1]) // 2)
+                
+                cv2.putText(viz_img, f"X={abs(max_deviation):.1f}px", 
+                           (label_point[0] + 10, label_point[1]), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[i], 2)
+                
+                cv2.putText(viz_img, f"C={C:.2f}%", 
+                           (label_point[0] + 10, label_point[1] + 25), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[i], 2)
         
         # Crear visualización global
         if visualize:
@@ -168,10 +194,11 @@ class AbombamientoProcessor:
             cv2.putText(viz_img, "Análisis de Abombamiento (Convexidad/Concavidad)", 
                        (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
             
-            # Leyenda
+            # Leyenda con los valores en colores correspondientes
             y_offset = 70
             for i, side in enumerate(side_names):
                 result = results[side]
+                # Mostrar valores con signo para indicar convexidad/concavidad
                 text = f"{side}: C={result['C']}% (X={result['X']}px, Nominal={result['nominal']}px)"
                 cv2.putText(viz_img, text, (20, y_offset), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, colors[i], 2)
@@ -246,7 +273,7 @@ class AbombamientoProcessor:
         
         return report_path, text_report_path
     
-    def process(self, image, corners, image_name=None, output_dir=None):
+    def process(self, image, corners, image_name=None, output_dir=None, mask=None):
         """
         Procesa la imagen para detectar abombamiento
         
@@ -255,12 +282,13 @@ class AbombamientoProcessor:
             corners: Esquinas de la palanquilla
             image_name: Nombre de la imagen (sin extensión)
             output_dir: Directorio de salida para guardar reportes
+            mask: Máscara de segmentación de la palanquilla (opcional)
             
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
         # Medir el abombamiento
-        results = self.measure_abombamiento(image, corners)
+        results = self.measure_abombamiento(image, corners, mask=mask)
         
         visualizations = {}
         
