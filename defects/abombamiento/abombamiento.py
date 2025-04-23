@@ -6,16 +6,20 @@ def distancia_a_segmento(p1, p2, punto):
     """
     Calcula la distancia mínima de un punto al segmento definido por p1 y p2.
     """
-    p1, p2, punto = np.array(p1), np.array(p2), np.array(punto)
-    v = p2 - p1
-    u = punto - p1
-    t = np.dot(u, v) / np.dot(v, v)
-    if t < 0:
-        return np.linalg.norm(punto - p1)
-    elif t > 1:
-        return np.linalg.norm(punto - p2)
-    else:
-        return np.abs(np.cross(v, u)) / np.linalg.norm(v)
+    try:
+        p1, p2, punto = np.array(p1, dtype=float), np.array(p2, dtype=float), np.array(punto, dtype=float)
+        v = p2 - p1
+        u = punto - p1
+        t = np.dot(u, v) / np.dot(v, v)
+        if t < 0:
+            return np.linalg.norm(punto - p1)
+        elif t > 1:
+            return np.linalg.norm(punto - p2)
+        else:
+            return np.abs(np.cross(v, u)) / np.linalg.norm(v)
+    except Exception as e:
+        print(f"Error en distancia_a_segmento: {e}")
+        return float('inf')  # Valor por defecto en caso de error
 
 def distancia_punto_a_linea(p1, p2, punto):
     """
@@ -30,7 +34,7 @@ def distancia_punto_a_linea(p1, p2, punto):
         La distancia perpendicular a la línea
     """
     try:
-        p1, p2, punto = np.array(p1), np.array(p2), np.array(punto)
+        p1, p2, punto = np.array(p1, dtype=float), np.array(p2, dtype=float), np.array(punto, dtype=float)
         # Vector de la línea
         linea = p2 - p1
         # Magnitud del vector de la línea
@@ -92,61 +96,76 @@ def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
     Returns:
         El nombre del lado más recto ("Lado 1 (Top)", "Lado 2 (Right)", etc.)
     """
-    # Verificar si los datos de entrada son válidos
-    if contorno is None or contorno_principal is None:
-        print("Error: Contornos no válidos para determinar el lado más recto.")
-        return "Lado 1 (Top)"  # Valor predeterminado
-    
-    # Asegurar que contorno es un array numpy
-    contorno = np.array(contorno)
-        
-    # Definir los lados de la caja (pares de vértices consecutivos)
-    lados = [
-        (contorno[0], contorno[1], "Lado 1 (Top)"),
-        (contorno[1], contorno[2], "Lado 2 (Right)"),
-        (contorno[2], contorno[3], "Lado 3 (Bottom)"),
-        (contorno[3], contorno[0], "Lado 4 (Left)"),
-    ]
-
-    # Extraer los puntos del contorno
     try:
-        contorno_pts = contorno_principal.reshape(-1, 2)
-    except AttributeError:
-        print("Error: El contorno principal no es un array válido.")
-        return "Lado 1 (Top)"  # Valor predeterminado
+        # Verificar si los datos de entrada son válidos
+        if contorno is None or contorno_principal is None:
+            print("Error: Contornos no válidos para determinar el lado más recto.")
+            return "Lado 1 (Top)"  # Valor predeterminado
         
-    puntos_por_lado = [[] for _ in range(4)]
+        # Asegurar que contorno es un array numpy
+        contorno = np.array(contorno, dtype=np.float32)
+            
+        # Definir los lados de la caja (pares de vértices consecutivos)
+        lados = [
+            (contorno[0], contorno[1], "Lado 1 (Top)"),
+            (contorno[1], contorno[2], "Lado 2 (Right)"),
+            (contorno[2], contorno[3], "Lado 3 (Bottom)"),
+            (contorno[3], contorno[0], "Lado 4 (Left)"),
+        ]
 
-    # Asignar cada punto del contorno al lado más cercano
-    for punto in contorno_pts:
-        distancias = [distancia_a_segmento(p1, p2, punto) for p1, p2, _ in lados]
-        indice_min = np.argmin(distancias)
-        puntos_por_lado[indice_min].append(punto)
-        
-    # Calcular el abombamiento (distancia perpendicular máxima) para cada lado
-    abombamientos = []
-    punto_max_por_lado = []  # Punto que produce el máximo abombamiento en cada lado
-    for i, (p1, p2, nombre) in enumerate(lados):
-        puntos_lado = np.array(puntos_por_lado[i]) if puntos_por_lado[i] else np.array([])
-        if len(puntos_lado) > 0:
-            distancias = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
-            abombamiento = np.max(distancias) if len(distancias) > 0 else 0
-            punto_max = puntos_lado[np.argmax(distancias)] if len(distancias) > 0 else None
+        # Extraer los puntos del contorno
+        try:
+            contorno_pts = contorno_principal.reshape(-1, 2)
+        except Exception as e:
+            print(f"Error: El contorno principal no es un array válido: {e}")
+            return "Lado 1 (Top)"  # Valor predeterminado
+            
+        puntos_por_lado = [[] for _ in range(4)]
+
+        # Asignar cada punto del contorno al lado más cercano
+        for punto in contorno_pts:
+            try:
+                distancias = [distancia_a_segmento(p1, p2, punto) for p1, p2, _ in lados]
+                indice_min = int(np.argmin(distancias))
+                puntos_por_lado[indice_min].append(punto)
+            except Exception as e:
+                print(f"Error al procesar punto del contorno: {e}")
+                continue
+            
+        # Calcular el abombamiento (distancia perpendicular máxima) para cada lado
+        abombamientos = []
+        punto_max_por_lado = []  # Punto que produce el máximo abombamiento en cada lado
+        for i, (p1, p2, nombre) in enumerate(lados):
+            try:
+                puntos_lado = np.array(puntos_por_lado[i]) if puntos_por_lado[i] else np.array([])
+                if len(puntos_lado) > 0:
+                    distancias = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
+                    abombamiento = np.max(distancias) if len(distancias) > 0 else 0
+                    punto_max = puntos_lado[int(np.argmax(distancias))] if len(distancias) > 0 else None
+                else:
+                    abombamiento = 0
+                    punto_max = None
+                abombamientos.append(abombamiento)
+                punto_max_por_lado.append(punto_max)
+                print(f"{nombre}: abombamiento = {abombamiento:.2f}")
+            except Exception as e:
+                print(f"Error al procesar lado {nombre}: {e}")
+                abombamientos.append(float('inf'))  # Valor arbitrariamente alto
+                punto_max_por_lado.append(None)
+
+        # Se determina el lado más recto (el de menor abombamiento)
+        if len(abombamientos) > 0:
+            indice_recto = int(np.argmin(abombamientos))
+            lado_recto_info = lados[indice_recto]
+            print("El lado más recto es:", lado_recto_info[2])
+            return lado_recto_info[2]
         else:
-            abombamiento = 0
-            punto_max = None
-        abombamientos.append(abombamiento)
-        punto_max_por_lado.append(punto_max)
-        print(f"{nombre}: abombamiento = {abombamiento:.2f}")
-
-    # Se determina el lado más recto (el de menor abombamiento)
-    if len(abombamientos) > 0:
-        indice_recto = np.argmin(abombamientos)
-        lado_recto_info = lados[indice_recto]
-        print("El lado más recto es:", lado_recto_info[2])
-        return lado_recto_info[2]
-    else:
-        return "Lado 1 (Top)"  # Valor predeterminado si no hay datos
+            return "Lado 1 (Top)"  # Valor predeterminado si no hay datos
+    except Exception as e:
+        print(f"Error general en obtener_lado_rotacion_abombamiento: {e}")
+        import traceback
+        traceback.print_exc()
+        return "Lado 1 (Top)"  # Valor predeterminado
 
 def obtener_abombamiento(contorno, contorno_principal):
     """
@@ -171,7 +190,7 @@ def obtener_abombamiento(contorno, contorno_principal):
         return 0.0, 0.0, "Lado 1 (Top)", None, {}
     
     # Convertir contorno a array numpy si no lo es ya
-    contorno = np.array(contorno)
+    contorno = np.array(contorno, dtype=np.float32)
         
     try:
         lados = {
@@ -223,7 +242,7 @@ def obtener_abombamiento(contorno, contorno_principal):
         for nombre, (p1, p2) in lados.items():
             # Calcular la longitud nominal del lado
             try:
-                longitud_nominal = np.linalg.norm(np.array(p1) - np.array(p2))
+                longitud_nominal = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
             except Exception as e:
                 print(f"Error al calcular longitud nominal: {e}")
                 longitud_nominal = 1.0  # Valor por defecto para evitar división por cero
@@ -235,7 +254,7 @@ def obtener_abombamiento(contorno, contorno_principal):
                     # Calcular distancias perpendiculares de cada punto a la línea
                     dists = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
                     abombamiento = np.max(dists) if len(dists) > 0 else 0
-                    idx_max = np.argmax(dists) if len(dists) > 0 else 0
+                    idx_max = int(np.argmax(dists)) if len(dists) > 0 else 0
                     punto_max = puntos_lado[idx_max] if len(dists) > 0 else None
                     
                     # Calcular la proyección del punto con máximo abombamiento
@@ -263,7 +282,7 @@ def obtener_abombamiento(contorno, contorno_principal):
         
         # Identificar el lado con mayor abombamiento (según porcentaje)
         if abombamientos_porcentuales:
-            # Buscar el lado con el valor máximo de abombamiento porcentual
+            # Encontrar el lado con valor máximo en el diccionario
             lado_max = max(abombamientos_porcentuales.items(), key=lambda x: x[1])[0]
             max_abombamiento_pix = abombamientos_pixeles[lado_max]
             max_porcentaje = abombamientos_porcentuales[lado_max]
@@ -289,6 +308,8 @@ def obtener_abombamiento(contorno, contorno_principal):
         
     except Exception as e:
         print(f"Error general en obtener_abombamiento: {e}")
+        import traceback
+        traceback.print_exc()
         return 0.0, 0.0, "Lado 1 (Top)", None, {}
     
     return max_porcentaje, max_abombamiento_pix, lado_max, punto_max_por_lado.get(lado_max), abombamientos_por_lado
@@ -315,7 +336,7 @@ def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=No
             return None
             
         # Convertir contorno a array numpy si no lo es ya
-        contorno = np.array(contorno)
+        contorno = np.array(contorno, dtype=np.float32)
             
         # Obtener los datos de abombamiento
         _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
@@ -412,7 +433,7 @@ def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0)
             return {}
             
         # Convertir contorno a array numpy si no lo es ya
-        contorno = np.array(contorno)
+        contorno = np.array(contorno, dtype=np.float32)
             
         # Obtener datos de abombamiento
         _, _, _, _, abombamientos_por_lado = obtener_abombamiento(contorno, contorno_principal)
@@ -433,7 +454,7 @@ def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0)
                 L_px = 1.0  # Evitar división por cero
                 L_mm = 1.0
             else:
-                L_px = np.linalg.norm(np.array(p1) - np.array(p2))
+                L_px = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
                 L_mm = L_px * factor_mm_px
             
             # Calcular C según la fórmula C = X / L * 100

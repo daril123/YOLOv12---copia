@@ -56,7 +56,10 @@ def model_fn(model_dir=None):
             defect_model_path = defect_path
     
     # Inicializar los detectores
+    print("Cargando modelo para detección de vértices/contornos...")
     vertex_detector = VertexDetector(vertex_model_path)
+    
+    print("Cargando modelo para detección de defectos...")
     defect_detector = DefectDetector(defect_model_path)
     
     # Inicializar los procesadores de defectos
@@ -72,8 +75,8 @@ def model_fn(model_dir=None):
     romboidad_processor = RomboidadProcessor()
     
     return {
-        'vertex_detector': vertex_detector,
-        'defect_detector': defect_detector,
+        'vertex_detector': vertex_detector,  # Para detectar contornos y vértices
+        'defect_detector': defect_detector,  # Para detectar defectos
         'processors': {
             'grietas_diagonales': diagonal_processor,
             'grietas_medio_camino': midway_processor,
@@ -139,58 +142,74 @@ def predict_fn(input_data, models, output_dir=None):
     image_name = input_data['name']
     
     # Extraer los modelos
-    vertex_detector = models['vertex_detector']
-    defect_detector = models['defect_detector']
+    vertex_detector = models['vertex_detector']  # Para vértices/contornos
+    defect_detector = models['defect_detector']  # Para defectos
     
     # 1. Preprocesar la imagen (redimensionar y recortar)
     print(f"Preprocesando imagen: {image_path}")
-    image = redimensionar_recortar_palanquilla(image, defect_detector.model, defect_detector.conf_threshold)
+    # Usar el modelo de vértices para el preprocesamiento
+    image = redimensionar_recortar_palanquilla(image, vertex_detector.model, 0.5)
     
-    # 2. Detectar vértices de la palanquilla
+    # 2. Detectar vértices de la palanquilla (usando modelo específico para vértices)
     print(f"Detectando vértices en: {image_path}")
-    vertices, success, palanquilla_mask = obtener_contorno_imagen(image, defect_detector.model, defect_detector.conf_threshold)
-    
-    if not success or vertices is None:
-        print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
-        # Usar un método alternativo para detectar los vértices
-        from common.detector import detect_palanquilla
-        vertices, success, palanquilla_mask = detect_palanquilla(image)
+    try:
+        vertices, success, palanquilla_mask = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
+        
         
         if not success or vertices is None:
-            print("Error: También falló el método alternativo. Usando toda la imagen.")
-            # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
-            h, w = image.shape[:2]
-            vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-            palanquilla_mask = None
-    
+            print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
+            # Usar un método alternativo para detectar los vértices
+            from common.detector import detect_palanquilla
+            vertices, success, palanquilla_mask = detect_palanquilla(image)
+            
+            if not success or vertices is None:
+                print("Error: También falló el método alternativo. Usando toda la imagen.")
+                # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
+                h, w = image.shape[:2]
+                vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
+                palanquilla_mask = None
+    except Exception as e:
+        print(f"Error al detectar vértices: {e}")
+        import traceback
+        traceback.print_exc()
+        h, w = image.shape[:2]
+        vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
+        palanquilla_mask = None
+        success = False
+
     # 3. Rotar imagen para alinear con el lado más recto
     print(f"Rotando imagen para alinear palanquilla")
     try:
         # Determinar lado más recto para rotación
         if vertices is not None and success:
-            contorno_aux, contorno_principal, _ = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
-            
-            if contorno_aux is not None and contorno_principal is not None:
-                # Importar módulo de abombamiento para determinar el lado más recto
-                from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
-                lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_principal)
+            try:
+                contorno_aux, contorno_principal, _ = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
                 
-                # Rotar la imagen
-                image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
-                
-                # Actualizar la imagen y detectar los nuevos vértices
-                image = image_rotada
-                vertices_aux, success_aux, palanquilla_mask_aux = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
-                
-                if success_aux and vertices_aux is not None:
-                    vertices = vertices_aux
-                    palanquilla_mask = palanquilla_mask_aux
-                else:
-                    print("Error: No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
+                if contorno_aux is not None and contorno_principal is not None:
+                    # Importar módulo de abombamiento para determinar el lado más recto
+                    from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
+                    lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_principal)
+                    
+                    # Rotar la imagen
+                    image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
+                    
+                    # Actualizar la imagen y detectar los nuevos vértices
+                    image = image_rotada
+                    vertices_aux, success_aux, palanquilla_mask_aux = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
+                    
+                    if success_aux and vertices_aux is not None:
+                        vertices = vertices_aux
+                        palanquilla_mask = palanquilla_mask_aux
+                    else:
+                        print("Error: No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
+            except Exception as inner_e:
+                print(f"Error al determinar lado de rotación: {inner_e}")
         else:
             print("No se pudo rotar la imagen: vértices no disponibles.")
     except Exception as e:
         print(f"Error al rotar la imagen: {e}")
+        import traceback
+        traceback.print_exc()
     
     # 4. Generar máscaras de zona con los vértices detectados
     print(f"Generando máscaras de zonas")
@@ -207,17 +226,17 @@ def predict_fn(input_data, models, output_dir=None):
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
     
     # 7. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
-    # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
+    # Es crucial usar el modelo de vértices, NO el de defectos
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
         image,
         vertices,
         image_name=image_name,
         output_dir=output_dir,
-        model=vertex_detector.model,  # Usando el modelo de vértices/máscara
-        conf_threshold=0.5,  # Valor típico para detección de máscaras
+        model=vertex_detector.model,  # Asegurarse de que se usa el modelo de vértices
+        conf_threshold=0.5,
         mask=palanquilla_mask
-    )
+    )   
     
     # 8. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']
