@@ -85,6 +85,34 @@ def proyectar_punto_en_linea(p1, p2, p):
         print(f"Error al proyectar punto en línea: {e}")
         return None
 
+def calcular_orientacion_punto(p1, p2, punto):
+    """
+    Determina si un punto está a la izquierda, derecha o sobre la línea definida por p1 y p2.
+    
+    Args:
+        p1, p2: Dos puntos que definen la línea
+        punto: Punto a evaluar
+    
+    Returns:
+        1 si el punto está a la derecha de la línea (convexo)
+        -1 si el punto está a la izquierda de la línea (cóncavo)
+        0 si el punto está sobre la línea
+    """
+    try:
+        p1, p2, punto = np.array(p1, dtype=float), np.array(p2, dtype=float), np.array(punto, dtype=float)
+        # Cálculo del producto cruz
+        val = (p2[1] - p1[1]) * (punto[0] - p2[0]) - (p2[0] - p1[0]) * (punto[1] - p2[1])
+        
+        if val > 0:
+            return 1  # Convexo (punto a la derecha de la línea)
+        elif val < 0:
+            return -1  # Cóncavo (punto a la izquierda de la línea)
+        else:
+            return 0  # Punto sobre la línea
+    except Exception as e:
+        print(f"Error al calcular orientación del punto: {e}")
+        return 0
+
 def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
     """
     Determina el lado más recto de la palanquilla para usar como referencia en la rotación.
@@ -167,13 +195,17 @@ def obtener_lado_rotacion_abombamiento(contorno, contorno_principal):
         traceback.print_exc()
         return "Lado 1 (Top)"  # Valor predeterminado
 
-def obtener_abombamiento(contorno, contorno_principal):
+def obtener_abombamiento(contorno, contorno_principal, mask=None):
     """
     Calcula el abombamiento (desviación) para cada lado del cuadrilátero.
+    Método corregido de acuerdo al criterio específico de medición:
+    - X: distancia desde el punto rojo al lado correspondiente (líneas de colores)
+    - D: longitud del lado correspondiente (líneas de colores)
     
     Args:
         contorno: Vértices de la palanquilla [top-left, top-right, bottom-right, bottom-left]
         contorno_principal: Contorno completo de la palanquilla
+        mask: Máscara binaria de la palanquilla (opcional, para verificación adicional)
     
     Returns:
         Una tupla con:
@@ -193,23 +225,12 @@ def obtener_abombamiento(contorno, contorno_principal):
     contorno = np.array(contorno, dtype=np.float32)
         
     try:
+        # Definir los lados (cada lado es un par de vértices consecutivos)
         lados = {
             "Lado 1 (Top)": (contorno[0], contorno[1]),
             "Lado 2 (Right)": (contorno[1], contorno[2]),
             "Lado 3 (Bottom)": (contorno[2], contorno[3]),
             "Lado 4 (Left)": (contorno[3], contorno[0])
-        }
-        # Se define si el lado es horizontal o vertical para usar el lado nominal correcto.
-        lado_pos = {
-            "Lado 1 (Top)": "Horizontal", 
-            "Lado 2 (Right)": "Vertical", 
-            "Lado 3 (Bottom)": "Horizontal", 
-            "Lado 4 (Left)": "Vertical"
-        }
-        # Para cada orientación se elige el lado nominal (usaremos el opuesto al que se está midiendo para tener referencia)
-        lados_pos = {
-            "Horizontal": ["Lado 1 (Top)", "Lado 3 (Bottom)"],
-            "Vertical": ["Lado 2 (Right)", "Lado 4 (Left)"]
         }
         
         # Extraer todos los puntos del contorno principal
@@ -219,66 +240,63 @@ def obtener_abombamiento(contorno, contorno_principal):
             print(f"Error al procesar contorno principal: {e}")
             contorno_pts = np.array([])
             
-        puntos_por_lado = [[] for _ in range(4)]
+        puntos_max_por_lado = {}
+        distancias_max_por_lado = {}
+        proyecciones_por_lado = {}
+        orientaciones_por_lado = {}
         
-        # Agrupar los puntos al lado más cercano
-        i = 0
+        # Para cada lado, encontrar el punto más lejano
         for nombre, (p1, p2) in lados.items():
+            # Calcular longitudes de los lados (D)
+            longitud_nominal = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
+            
+            # Inicializar valores
+            max_distancia = 0
+            punto_max = None
+            proyeccion_max = None
+            orientacion = 0
+            
+            # Analizar todos los puntos del contorno para encontrar el más lejano a este lado
             for punto in contorno_pts:
-                try:
-                    distancia = distancia_a_segmento(p1, p2, punto)
-                    if distancia < 20:  # Umbral para considerar puntos cercanos a un lado
-                        puntos_por_lado[i].append(punto)
-                except Exception as e:
-                    print(f"Error al calcular distancia a segmento: {e}")
-            i += 1
+                # Calcular la distancia perpendicular a la línea
+                dist_perp = distancia_punto_a_linea(p1, p2, punto)
+                
+                # Si es la distancia máxima hasta ahora, actualizar
+                if dist_perp > max_distancia:
+                    max_distancia = dist_perp
+                    punto_max = punto
+                    
+                    # Calcular la proyección del punto sobre la línea
+                    proyeccion_max = proyectar_punto_en_linea(p1, p2, punto)
+                    
+                    # Calcular la orientación (si es convexo o cóncavo)
+                    orientacion = calcular_orientacion_punto(p1, p2, punto)
+            
+            # Guardar el resultado para este lado
+            puntos_max_por_lado[nombre] = punto_max
+            distancias_max_por_lado[nombre] = max_distancia
+            proyecciones_por_lado[nombre] = proyeccion_max
+            orientaciones_por_lado[nombre] = orientacion
         
+        # Calcular porcentajes de abombamiento (C = X/D*100)
         abombamientos_pixeles = {}
         abombamientos_porcentuales = {}
-        punto_max_por_lado = {}  # Se guarda para cada lado el punto que genera el máximo abombamiento
-        proyeccion_max_por_lado = {}  # Proyección del punto con máximo abombamiento sobre la línea
         
-        i = 0
         for nombre, (p1, p2) in lados.items():
-            # Calcular la longitud nominal del lado
-            try:
-                longitud_nominal = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
-            except Exception as e:
-                print(f"Error al calcular longitud nominal: {e}")
-                longitud_nominal = 1.0  # Valor por defecto para evitar división por cero
+            # X = distancia máxima (en píxeles)
+            X = distancias_max_por_lado.get(nombre, 0)
             
-            puntos_lado = np.array(puntos_por_lado[i]) if len(puntos_por_lado[i]) > 0 else np.array([])
+            # D = longitud nominal del lado (en píxeles)
+            D = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
             
-            if len(puntos_lado) > 0:
-                try:
-                    # Calcular distancias perpendiculares de cada punto a la línea
-                    dists = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
-                    abombamiento = np.max(dists) if len(dists) > 0 else 0
-                    idx_max = int(np.argmax(dists)) if len(dists) > 0 else 0
-                    punto_max = puntos_lado[idx_max] if len(dists) > 0 else None
-                    
-                    # Calcular la proyección del punto con máximo abombamiento
-                    proyeccion = proyectar_punto_en_linea(p1, p2, punto_max) if punto_max is not None else None
-                except Exception as e:
-                    print(f"Error al calcular distancias para {nombre}: {e}")
-                    abombamiento = 0
-                    punto_max = None
-                    proyeccion = None
-            else:
-                abombamiento = 0
-                punto_max = None
-                proyeccion = None
+            # C = X/D*100 (porcentaje de abombamiento)
+            C = (X / D * 100) if D > 0 else 0
             
-            # Calcular el porcentaje de abombamiento respecto a la longitud nominal
-            porcentaje = (abombamiento / longitud_nominal * 100) if longitud_nominal != 0 else 0
+            abombamientos_pixeles[nombre] = X
+            abombamientos_porcentuales[nombre] = C
             
-            abombamientos_pixeles[nombre] = abombamiento
-            abombamientos_porcentuales[nombre] = porcentaje
-            punto_max_por_lado[nombre] = punto_max
-            proyeccion_max_por_lado[nombre] = proyeccion
-            
-            print(f"{nombre}: abombamiento = {abombamiento:.2f} px, {porcentaje:.2f}%")
-            i += 1
+            tipo = "convexo" if orientaciones_por_lado.get(nombre, 0) >= 0 else "cóncavo"
+            print(f"{nombre}: X={X:.2f}px, D={D:.2f}px, C={C:.2f}%, {tipo}")
         
         # Identificar el lado con mayor abombamiento (según porcentaje)
         if abombamientos_porcentuales:
@@ -292,16 +310,19 @@ def obtener_abombamiento(contorno, contorno_principal):
             max_porcentaje = 0
         
         print("El mayor abombamiento se encuentra en", lado_max, "con un valor de", 
-              max_abombamiento_pix, "px, lo que equivale a", max_porcentaje, "%")
+              max_abombamiento_pix, "px, lo que equivale a", max_porcentaje, "%",
+              ", tipo:", "convexo" if orientaciones_por_lado.get(lado_max, 0) >= 0 else "cóncavo")
         
         # Crear diccionario con todos los resultados por lado
         abombamientos_por_lado = {
             lado: {
-                'abombamiento_px': abombamientos_pixeles.get(lado, 0),
-                'abombamiento_porcentaje': abombamientos_porcentuales.get(lado, 0),
-                'punto_max': punto_max_por_lado.get(lado, None),
-                'proyeccion': proyeccion_max_por_lado.get(lado, None),
-                'vertices': lados.get(lado, (None, None))
+                'X_px': abombamientos_pixeles.get(lado, 0),
+                'D_px': np.linalg.norm(np.array(lados[lado][0], dtype=float) - np.array(lados[lado][1], dtype=float)),
+                'C_porcentaje': abombamientos_porcentuales.get(lado, 0),
+                'punto_max': puntos_max_por_lado.get(lado, None),
+                'proyeccion': proyecciones_por_lado.get(lado, None),
+                'vertices': lados.get(lado, (None, None)),
+                'orientacion': orientaciones_por_lado.get(lado, 0)
             }
             for lado in lados
         }
@@ -312,11 +333,16 @@ def obtener_abombamiento(contorno, contorno_principal):
         traceback.print_exc()
         return 0.0, 0.0, "Lado 1 (Top)", None, {}
     
-    return max_porcentaje, max_abombamiento_pix, lado_max, punto_max_por_lado.get(lado_max), abombamientos_por_lado
+    return max_porcentaje, max_abombamiento_pix, lado_max, puntos_max_por_lado.get(lado_max), abombamientos_por_lado
 
 def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=None):
     """
     Visualiza el abombamiento en todos los lados de la palanquilla.
+    Usa el esquema de colores especificado:
+    - Lado 1 (Top): azul
+    - Lado 2 (Right): verde
+    - Lado 3 (Bottom): rojo
+    - Lado 4 (Left): amarillo
     
     Args:
         image: Imagen original
@@ -356,7 +382,12 @@ def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=No
             "Lado 4 (Left)": (0, 255, 255)    # Amarillo
         }
         
-        # Para cada lado, dibujar la línea nominal y la línea de abombamiento
+        # Título principal
+        cv2.putText(img_resultado, "Análisis de Abombamiento", (20, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        # Para cada lado, dibujar la línea nominal con su color específico y el punto de máximo abombamiento
+        y_offset = 70  # Posición inicial para texto
         for lado, datos in abombamientos_por_lado.items():
             p1, p2 = datos['vertices']
             
@@ -367,40 +398,42 @@ def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=No
             p1 = tuple(np.array(p1).astype(int))
             p2 = tuple(np.array(p2).astype(int))
             
-            # Dibujar la línea nominal
-            cv2.line(img_resultado, p1, p2, colores[lado], 2)
+            # Dibujar la línea nominal con su color específico (borde de la zona de eventos)
+            color_lado = colores[lado]
+            cv2.line(img_resultado, p1, p2, color_lado, 2)
             
             # Si hay punto de máximo abombamiento, dibujarlo
             if datos['punto_max'] is not None and datos['proyeccion'] is not None:
                 punto_max = tuple(np.array(datos['punto_max']).astype(int))
                 proyeccion = tuple(np.array(datos['proyeccion']).astype(int))
                 
-                # Dibujar línea de abombamiento
-                cv2.line(img_resultado, punto_max, proyeccion, (0, 0, 255), 2)
+                # Dibujar el punto rojo (punto máximo)
+                cv2.circle(img_resultado, punto_max, 5, (0, 0, 255), -1)  # Rojo para punto máximo
                 
-                # Dibujar puntos
-                cv2.circle(img_resultado, punto_max, 5, (0, 0, 255), -1)
-                cv2.circle(img_resultado, proyeccion, 5, (0, 255, 255), -1)
+                # Dibujar una línea que conecte el punto de máximo abombamiento con su proyección
+                cv2.line(img_resultado, punto_max, proyeccion, (255, 255, 255), 1, cv2.LINE_AA)  # Línea blanca
                 
-                # Añadir etiqueta con valor
-                abombamiento_px = datos['abombamiento_px']
-                abombamiento_porcentaje = datos['abombamiento_porcentaje']
-                texto = f"{abombamiento_px:.1f}px ({abombamiento_porcentaje:.1f}%)"
+                # Añadir etiqueta con valores
+                X_px = datos['X_px']
+                D_px = datos['D_px']
+                C_porcentaje = datos['C_porcentaje']
+                tipo = "convexo" if datos['orientacion'] >= 0 else "cóncavo"
                 
-                # Posición de la etiqueta (ajustar según la posición del punto)
-                pos_x = (punto_max[0] + proyeccion[0]) // 2
-                pos_y = (punto_max[1] + proyeccion[1]) // 2
+                # Crear texto para este lado
+                texto_lado = f"{lado}: X={X_px:.1f}px, D={D_px:.1f}px, C={C_porcentaje:.1f}%, {tipo}"
                 
                 # Añadir fondo negro para mejor visibilidad
-                (text_width, text_height), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                (text_width, text_height), _ = cv2.getTextSize(texto_lado, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
                 cv2.rectangle(img_resultado, 
-                             (pos_x - 5, pos_y - text_height - 5), 
-                             (pos_x + text_width + 5, pos_y + 5), 
+                             (20, y_offset - text_height - 5), 
+                             (20 + text_width + 10, y_offset + 5), 
                              (0, 0, 0), -1)
                 
-                # Añadir texto
-                cv2.putText(img_resultado, texto, (pos_x, pos_y), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                # Añadir texto con el color correspondiente al lado
+                cv2.putText(img_resultado, texto_lado, (25, y_offset), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_lado, 1)
+                
+                y_offset += 25  # Incrementar offset para el siguiente texto
         
         # Guardar la imagen si se proporciona una ruta
         if guardar_path:
@@ -415,7 +448,7 @@ def visualizar_abombamiento(image, contorno, contorno_principal, guardar_path=No
 
 def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0):
     """
-    Calcula el abombamiento en milímetros según la fórmula C = X / L * 100.
+    Calcula el abombamiento en milímetros según la fórmula C = X / D * 100.
     
     Args:
         image: Imagen original
@@ -443,29 +476,23 @@ def calcular_abombamiento(image, contorno, contorno_principal, factor_mm_px=1.0)
         
         for lado, datos in abombamientos_por_lado.items():
             # X es el valor de abombamiento en píxeles
-            X_px = datos['abombamiento_px']
+            X_px = datos['X_px']
             X_mm = X_px * factor_mm_px
             
-            # Longitud nominal del lado
-            p1, p2 = datos['vertices']
+            # D es la longitud nominal del lado
+            D_px = datos['D_px']
+            D_mm = D_px * factor_mm_px
             
-            # Verificar que los vértices sean válidos
-            if p1 is None or p2 is None:
-                L_px = 1.0  # Evitar división por cero
-                L_mm = 1.0
-            else:
-                L_px = np.linalg.norm(np.array(p1, dtype=float) - np.array(p2, dtype=float))
-                L_mm = L_px * factor_mm_px
-            
-            # Calcular C según la fórmula C = X / L * 100
-            C = X_mm / L_mm * 100 if L_mm > 0 else 0
+            # C es el porcentaje de abombamiento según la fórmula C = X/D*100
+            C = X_mm / D_mm * 100 if D_mm > 0 else 0
             
             resultados[lado] = {
                 'X_mm': X_mm,
-                'L_mm': L_mm,
+                'D_mm': D_mm,
                 'C_porcentaje': C,
                 'X_px': X_px,
-                'L_px': L_px
+                'D_px': D_px,
+                'orientacion': datos['orientacion']
             }
         
         return resultados

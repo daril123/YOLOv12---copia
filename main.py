@@ -145,59 +145,93 @@ def predict_fn(input_data, models, output_dir=None):
     vertex_detector = models['vertex_detector']
     defect_detector = models['defect_detector']
     
-    
+    # 1. Pre-procesamiento de la imagen (opcional)
+    # Redimensionar si la imagen es muy grande
+    h, w = image.shape[:2]
+    if h > 3000 or w > 3000:
+        max_dim = 2000
+        scale_factor = max_dim / max(h, w)
+        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+        print(f"Redimensionando imagen de {w}x{h} a {new_w}x{new_h}")
+        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     # 2. Detectar vértices de la palanquilla
     print(f"Detectando vértices en: {image_path}")
     try:
-        vertices, success, palanquilla_mask = obtener_contorno_imagen(image, vertex_detector.model, vertex_detector.conf_threshold)
+        # Usar la función mejorada directamente desde utils.contorno
+        from utils.contorno import obtener_contorno_imagen
+        vertices, contorno_principal, palanquilla_mask = obtener_contorno_imagen(
+            image, vertex_detector.model, vertex_detector.conf_threshold)
         
-        if not success or vertices is None:
+        success = vertices is not None and len(vertices) == 4
+        
+        if not success:
             print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
-            # Usar un método alternativo para detectar los vértices
-            from common.detector import detect_palanquilla
-            vertices, success, palanquilla_mask = detect_palanquilla(image)
+            # Usar método alternativo del detector de vértices
+            vertices, success, palanquilla_mask = vertex_detector.detect_vertices_alternative(image)
             
             if not success or vertices is None:
                 print("Error: También falló el método alternativo. Usando toda la imagen.")
                 # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
                 h, w = image.shape[:2]
                 vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-                palanquilla_mask = None
+                # Crear una máscara que cubra toda la imagen
+                palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
     except Exception as e:
         print(f"Error al detectar vértices: {e}")
         import traceback
         traceback.print_exc()
         h, w = image.shape[:2]
         vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-        palanquilla_mask = None
+        # Crear una máscara que cubra toda la imagen
+        palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
         success = False
 
-    # 3. Rotar imagen para alinear con el lado más recto
+    # 3. Verificar y corregir vértices si es necesario
+    # Asegurar que los vértices están dentro de los límites de la imagen
+    h, w = image.shape[:2]
+    
+    # Corrección de vértices fuera de los límites
+    for i in range(len(vertices)):
+        vertices[i][0] = max(0, min(w-1, vertices[i][0]))
+        vertices[i][1] = max(0, min(h-1, vertices[i][1]))
+    
+    # Verificar que el área del cuadrilátero sea razonable
+    contorno_np = vertices.reshape(-1, 1, 2)
+    area = cv2.contourArea(contorno_np)
+    
+    if area < 10000 or area > 0.95 * w * h:  # Muy pequeño o casi toda la imagen
+        print(f"Advertencia: Área del cuadrilátero anormal ({area} píxeles). Ajustando a toda la imagen.")
+        vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
+        contorno_np = vertices.reshape(-1, 1, 2)
+        # Recrear la máscara
+        palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
+
+    # 4. Rotar imagen para alinear con el lado más recto
     print(f"Rotando imagen para alinear palanquilla")
     try:
         # Determinar lado más recto para rotación
-        if vertices is not None and success:
+        if success:
             try:
-                contorno_aux, contorno_principal, _ = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
+                # Importar módulo de abombamiento para determinar el lado más recto
+                from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
+                lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_np)
                 
-                if contorno_aux is not None and contorno_principal is not None:
-                    # Importar módulo de abombamiento para determinar el lado más recto
-                    from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
-                    lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_principal)
-                    
-                    # Rotar la imagen
-                    image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
-                    
-                    # Actualizar la imagen y detectar los nuevos vértices
-                    image = image_rotada
-                    vertices_aux, success_aux, palanquilla_mask_aux = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
-                    
-                    if success_aux and vertices_aux is not None:
-                        vertices = vertices_aux
-                        palanquilla_mask = palanquilla_mask_aux
-                    else:
-                        print("Error: No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
+                # Rotar la imagen
+                from utils.contorno import rotar_imagen_lado
+                image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
+                
+                # Actualizar la imagen y detectar los nuevos vértices
+                image = image_rotada
+                vertices_aux, contorno_aux, palanquilla_mask_aux = obtener_contorno_imagen(
+                    image, vertex_detector.model, vertex_detector.conf_threshold)
+                
+                if vertices_aux is not None and len(vertices_aux) == 4:
+                    vertices = vertices_aux
+                    contorno_np = contorno_aux
+                    palanquilla_mask = palanquilla_mask_aux
+                else:
+                    print("No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
             except Exception as inner_e:
                 print(f"Error al determinar lado de rotación: {inner_e}")
         else:
@@ -207,21 +241,21 @@ def predict_fn(input_data, models, output_dir=None):
         import traceback
         traceback.print_exc()
     
-    # 4. Generar máscaras de zona con los vértices detectados
+    # 5. Generar máscaras de zona con los vértices detectados
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
-    # 5. Detectar defectos con el detector de defectos
+    # 6. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
     
     if not detections:
         print("No se detectaron defectos en esta imagen.")
     
-    # 6. Clasificar los defectos según su posición en las zonas
+    # 7. Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
     
-    # 7. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
+    # 8. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
     # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
@@ -230,11 +264,11 @@ def predict_fn(input_data, models, output_dir=None):
         image_name=image_name,
         output_dir=output_dir,
         model=vertex_detector.model,  # Usando el modelo de vértices/máscara
-        conf_threshold=0.5,  # Valor típico para detección de máscaras
+        conf_threshold=0.35,  # Valor reducido para mejorar detección
         mask=palanquilla_mask
     )
     
-    # 8. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
+    # 9. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,

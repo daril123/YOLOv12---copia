@@ -11,6 +11,7 @@ from .abombamiento import (
     visualizar_abombamiento,
     calcular_abombamiento
 )
+from .enhanced_visualization import visualizar_abombamiento_enhanced, generar_reporte_enhanced
 
 class AbombamientoProcessor:
     """
@@ -23,14 +24,15 @@ class AbombamientoProcessor:
         """
         self.name = "abombamiento"
     
-    def measure_abombamiento(self, image, corners, contorno_principal, mask=None, factor_mm_px=1.0):
+    def measure_abombamiento(self, image, corners, contorno_principal=None, mask=None, factor_mm_px=1.0):
         """
-        Mide el abombamiento en todos los lados de la palanquilla
+        Mide el abombamiento en todos los lados de la palanquilla usando la visualización mejorada
+        con vectores perpendiculares y etiquetas X1, X2, X3, X4 y D1, D2, D3, D4
         
         Args:
             image: Imagen original
             corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left]
-            contorno_principal: Contorno completo de la palanquilla
+            contorno_principal: Contorno completo de la palanquilla (opcional)
             mask: Máscara de la palanquilla (opcional)
             factor_mm_px: Factor de conversión de píxeles a milímetros
             
@@ -41,25 +43,44 @@ class AbombamientoProcessor:
         corners_np = np.array(corners, dtype=np.float32)
         
         try:
-            # Obtener los resultados de abombamiento para cada lado
-            max_porcentaje, max_abombamiento_pix, lado_max, punto_max, abombamientos_por_lado = obtener_abombamiento(corners_np, contorno_principal)
+            # Si no se proporciona contorno_principal, intentar crearlo desde la máscara o corners
+            if contorno_principal is None:
+                if mask is not None:
+                    # Encontrar contornos en la máscara
+                    contornos, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contornos:
+                        contorno_principal = max(contornos, key=cv2.contourArea)
+                    else:
+                        # Si no hay contornos en la máscara, crear uno simple desde las esquinas
+                        contorno_principal = corners_np.reshape(-1, 1, 2).astype(np.int32)
+                else:
+                    # Crear un contorno simple desde las esquinas
+                    contorno_principal = corners_np.reshape(-1, 1, 2).astype(np.int32)
             
-            # Generar resultados completos por lado con el formato C = X / L * 100
-            resultados_abombamiento = calcular_abombamiento(image, corners_np, contorno_principal, factor_mm_px)
+            # Usar la visualización mejorada
+            imagen_resultado, resultados_por_lado = visualizar_abombamiento_enhanced(
+                image, corners_np, contorno_principal)
             
-            # Crear visualizaciones
-            imagen_resultado = visualizar_abombamiento(image, corners_np, contorno_principal)
+            # Determinar el lado con mayor abombamiento
+            if resultados_por_lado:
+                # Encontrar el lado con valor máximo de C
+                lado_max = max(resultados_por_lado.items(), key=lambda x: x[1]['C_porcentaje'])[0]
+                max_abombamiento_pix = resultados_por_lado[lado_max]['X_px']
+                max_porcentaje = resultados_por_lado[lado_max]['C_porcentaje']
+            else:
+                lado_max = "Lado 1 (Top)"
+                max_abombamiento_pix = 0
+                max_porcentaje = 0
             
             # Preparar resultados
             results = {
                 'lado_max_abombamiento': lado_max,
                 'max_abombamiento_porcentaje': round(max_porcentaje, 2),
                 'max_abombamiento_pixeles': round(max_abombamiento_pix, 2),
-                'punto_max_abombamiento': punto_max,
-                'resultados_por_lado': resultados_abombamiento
+                'resultados_por_lado': resultados_por_lado
             }
             
-            # Si hay visualización, añadirla a los resultados
+            # Añadir la visualización mejorada
             if imagen_resultado is not None:
                 results['visualization'] = imagen_resultado
             
@@ -74,12 +95,11 @@ class AbombamientoProcessor:
                 'lado_max_abombamiento': "Lado 1 (Top)",
                 'max_abombamiento_porcentaje': 0.0,
                 'max_abombamiento_pixeles': 0.0,
-                'punto_max_abombamiento': None,
                 'resultados_por_lado': {
-                    "Lado 1 (Top)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 2 (Right)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 3 (Bottom)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 4 (Left)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0}
+                    "Lado 1 (Top)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 2 (Right)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 3 (Bottom)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 4 (Left)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0}
                 }
             }
             
@@ -91,7 +111,7 @@ class AbombamientoProcessor:
     
     def generate_report(self, image_name, abombamiento_data, output_dir):
         """
-        Genera un informe del abombamiento
+        Genera un informe del abombamiento con la notación mejorada (X1, X2, X3, X4 y D1, D2, D3, D4)
         
         Args:
             image_name: Nombre de la imagen original
@@ -110,18 +130,27 @@ class AbombamientoProcessor:
             max_abombamiento = abombamiento_data.get('max_abombamiento_porcentaje', 0.0)
             resultados_por_lado = abombamiento_data.get('resultados_por_lado', {})
             
+            # Definir índices para cada lado
+            indices = {
+                "Lado 1 (Top)": "1",
+                "Lado 2 (Right)": "2",
+                "Lado 3 (Bottom)": "3",
+                "Lado 4 (Left)": "4"
+            }
+            
             # Crear DataFrame para el informe
             datos = []
             for lado, valores in resultados_por_lado.items():
                 # Verificar que los valores tienen las claves esperadas
-                X_mm = valores.get('X_mm', 0.0)
-                L_mm = valores.get('L_mm', 1.0)
+                indice = indices.get(lado, "")
+                X_px = valores.get('X_px', 0.0)
+                D_px = valores.get('D_px', 1.0)
                 C_porcentaje = valores.get('C_porcentaje', 0.0)
                 
                 datos.append({
                     'Lado': lado,
-                    'X_mm': X_mm,
-                    'L_mm': L_mm,
+                    f'X{indice}_px': X_px,
+                    f'D{indice}_px': D_px,
                     'Abombamiento_Porcentaje': C_porcentaje
                 })
             
@@ -133,32 +162,19 @@ class AbombamientoProcessor:
             # Guardar como CSV
             df.to_csv(report_path, index=False)
             
-            # También generar una versión en formato de texto para fácil visualización
-            text_report_path = os.path.join(output_dir, f"{image_name}_abombamiento_report.txt")
-            
-            with open(text_report_path, 'w', encoding='utf-8') as f:
-                f.write(f"REPORTE DE ABOMBAMIENTO - {image_name}\n")
-                f.write("="*50 + "\n\n")
-                
-                for lado, valores in resultados_por_lado.items():
-                    f.write(f"{lado}:\n")
-                    f.write(f"  Distancia de anormalidad (X): {valores.get('X_mm', 0.0):.2f} mm\n")
-                    f.write(f"  Longitud nominal (L): {valores.get('L_mm', 1.0):.2f} mm\n")
-                    f.write(f"  Abombamiento (C = X/L*100): {valores.get('C_porcentaje', 0.0):.2f}%\n\n")
-                
-                f.write("RESUMEN:\n")
-                f.write(f"  Lado con mayor abombamiento: {lado_max}\n")
-                f.write(f"  Valor de abombamiento: {max_abombamiento:.2f}%\n")
+            # Generar reporte mejorado en formato de texto
+            text_report_path = os.path.join(output_dir, f"{image_name}_abombamiento_report_enhanced.txt")
+            generar_reporte_enhanced(resultados_por_lado, text_report_path)
             
             print(f"Reporte generado en: {report_path}")
-            print(f"Reporte de texto generado en: {text_report_path}")
+            print(f"Reporte mejorado generado en: {text_report_path}")
             
             # Guardar la visualización si existe
             viz_path = None
             if 'visualization' in abombamiento_data:
-                viz_path = os.path.join(output_dir, f"{image_name}_abombamiento_visualization.jpg")
+                viz_path = os.path.join(output_dir, f"{image_name}_abombamiento_visualization_enhanced.jpg")
                 cv2.imwrite(viz_path, abombamiento_data['visualization'])
-                print(f"Visualización guardada en: {viz_path}")
+                print(f"Visualización mejorada guardada en: {viz_path}")
             
             return report_path, text_report_path, viz_path if viz_path else None
             
@@ -172,7 +188,7 @@ class AbombamientoProcessor:
             
             # Crear un CSV básico
             with open(report_path, 'w', encoding='utf-8') as f:
-                f.write("Lado,X_mm,L_mm,Abombamiento_Porcentaje\n")
+                f.write("Lado,X_px,D_px,Abombamiento_Porcentaje\n")
                 for lado in ["Lado 1 (Top)", "Lado 2 (Right)", "Lado 3 (Bottom)", "Lado 4 (Left)"]:
                     f.write(f"{lado},0.00,1.00,0.00\n")
             
@@ -184,9 +200,9 @@ class AbombamientoProcessor:
             
             return report_path, text_report_path, None
     
-    def process(self, image, corners, image_name=None, output_dir=None, model=None, conf_threshold=0.5, mask=None):
+    def process(self, image, corners, image_name=None, output_dir=None, model=None, conf_threshold=0.35, mask=None):
         """
-        Procesa la imagen para detectar abombamiento
+        Procesa la imagen para detectar abombamiento con la visualización mejorada
         
         Args:
             image: Imagen original
@@ -220,8 +236,18 @@ class AbombamientoProcessor:
                     corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
                     contorno_principal = corners.reshape(-1, 1, 2)
             else:
-                # Si se proporcionan las esquinas pero no el contorno principal, crearlo
-                contorno_principal = np.array(corners).reshape(-1, 1, 2)
+                # Si se proporcionan las esquinas pero no el contorno principal
+                if mask is not None:
+                    # Intentar extraer el contorno principal de la máscara
+                    contornos, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contornos:
+                        contorno_principal = max(contornos, key=cv2.contourArea)
+                    else:
+                        # Si no hay contornos en la máscara, crear uno simple desde las esquinas
+                        contorno_principal = np.array(corners).reshape(-1, 1, 2)
+                else:
+                    # Crear un contorno simple desde las esquinas
+                    contorno_principal = np.array(corners).reshape(-1, 1, 2)
             
             # Verificar que tanto corners como contorno_principal son válidos
             if corners is None or len(corners) != 4 or contorno_principal is None:
@@ -230,15 +256,8 @@ class AbombamientoProcessor:
                 corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
                 contorno_principal = corners.reshape(-1, 1, 2)
 
-            # Determinar el lado más recto para la rotación
-            try:
-                lado_mas_recto = obtener_lado_rotacion_abombamiento(corners, contorno_principal)
-            except Exception as e:
-                print(f"Error al determinar el lado más recto: {e}")
-                lado_mas_recto = "Lado 1 (Top)"  # Valor predeterminado
-            
-            # Medir abombamiento
-            results = self.measure_abombamiento(image, corners, contorno_principal)
+            # Medir abombamiento con visualización mejorada
+            results = self.measure_abombamiento(image, corners, contorno_principal, mask)
             
             visualizations = {}
             
@@ -272,12 +291,11 @@ class AbombamientoProcessor:
                 'lado_max_abombamiento': "Lado 1 (Top)",
                 'max_abombamiento_porcentaje': 0.0,
                 'max_abombamiento_pixeles': 0.0,
-                'punto_max_abombamiento': None,
                 'resultados_por_lado': {
-                    "Lado 1 (Top)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 2 (Right)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 3 (Bottom)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0},
-                    "Lado 4 (Left)": {'X_mm': 0.0, 'L_mm': 1.0, 'C_porcentaje': 0.0, 'X_px': 0.0, 'L_px': 1.0}
+                    "Lado 1 (Top)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 2 (Right)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 3 (Bottom)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0},
+                    "Lado 4 (Left)": {'X_px': 0.0, 'D_px': 1.0, 'C_porcentaje': 0.0}
                 }
             }
             
