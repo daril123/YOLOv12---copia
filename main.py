@@ -142,19 +142,15 @@ def predict_fn(input_data, models, output_dir=None):
     image_name = input_data['name']
     
     # Extraer los modelos
-    vertex_detector = models['vertex_detector']  # Para vértices/contornos
-    defect_detector = models['defect_detector']  # Para defectos
+    vertex_detector = models['vertex_detector']
+    defect_detector = models['defect_detector']
     
-    # 1. Preprocesar la imagen (redimensionar y recortar)
-    print(f"Preprocesando imagen: {image_path}")
-    # Usar el modelo de vértices para el preprocesamiento
-    image = redimensionar_recortar_palanquilla(image, vertex_detector.model, 0.5)
     
-    # 2. Detectar vértices de la palanquilla (usando modelo específico para vértices)
+
+    # 2. Detectar vértices de la palanquilla
     print(f"Detectando vértices en: {image_path}")
     try:
-        vertices, success, palanquilla_mask = obtener_contorno_imagen(image, vertex_detector.model, 0.5)
-        
+        vertices, success, palanquilla_mask = obtener_contorno_imagen(image, vertex_detector.model, vertex_detector.conf_threshold)
         
         if not success or vertices is None:
             print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
@@ -226,17 +222,17 @@ def predict_fn(input_data, models, output_dir=None):
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
     
     # 7. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
-    # Es crucial usar el modelo de vértices, NO el de defectos
+    # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
         image,
         vertices,
         image_name=image_name,
         output_dir=output_dir,
-        model=vertex_detector.model,  # Asegurarse de que se usa el modelo de vértices
-        conf_threshold=0.5,
+        model=vertex_detector.model,  # Usando el modelo de vértices/máscara
+        conf_threshold=0.5,  # Valor típico para detección de máscaras
         mask=palanquilla_mask
-    )   
+    )
     
     # 8. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']

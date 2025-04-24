@@ -193,7 +193,7 @@ class AbombamientoProcessor:
             corners: Esquinas de la palanquilla
             image_name: Nombre de la imagen (sin extensión)
             output_dir: Directorio de salida para guardar reportes
-            model: Modelo para obtener contornos (debe ser el modelo de vértices)
+            model: Modelo para obtener contornos (opcional, si no se proporcionan las esquinas)
             conf_threshold: Umbral de confianza para detección
             mask: Máscara de la palanquilla (opcional)
             
@@ -204,11 +204,11 @@ class AbombamientoProcessor:
             # Si no se proporcionan las esquinas correctamente, intentar detectarlas
             if corners is None or len(corners) != 4:
                 if model is not None:
-                    print("Detectando contornos de la palanquilla para análisis de abombamiento usando modelo de vértices...")
+                    print("Detectando contornos de la palanquilla...")
                     corners, contorno_principal, mask = obtener_contorno_imagen(image, model, conf_threshold)
                     
                     if corners is None:
-                        print("Error: No se pudo detectar el contorno de la palanquilla. Utilizando valores predeterminados.")
+                        print("Error: No se pudo detectar el contorno de la palanquilla")
                         # Crear valores predeterminados para el análisis
                         h, w = image.shape[:2]
                         corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
@@ -222,8 +222,6 @@ class AbombamientoProcessor:
             else:
                 # Si se proporcionan las esquinas pero no el contorno principal, crearlo
                 contorno_principal = np.array(corners).reshape(-1, 1, 2)
-            
-            
             
             # Verificar que tanto corners como contorno_principal son válidos
             if corners is None or len(corners) != 4 or contorno_principal is None:
