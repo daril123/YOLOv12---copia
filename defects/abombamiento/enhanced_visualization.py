@@ -5,6 +5,7 @@ import math
 def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
     """
     Visualización mejorada con vectores perpendiculares para X y etiquetas claras para D
+    con corrección para asegurar que las proyecciones se realicen en la dirección correcta.
     
     Args:
         image: Imagen original
@@ -12,15 +13,15 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
         contorno_principal: Contorno completo de la palanquilla
         
     Returns:
-        Imagen con visualización mejorada
+        Imagen con visualización mejorada y diccionario con resultados por lado
     """
     try:
         # Verificar entradas
         if image is None or contorno is None:
             print("Error: Entrada inválida para visualizar abombamiento")
             if image is not None:
-                return image.copy()
-            return None
+                return image.copy(), {}
+            return None, {}
             
         # Convertir contorno a array numpy si no lo es ya
         contorno = np.array(contorno, dtype=np.float32)
@@ -62,6 +63,14 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
         except Exception as e:
             print(f"Error al procesar contorno principal: {e}")
             contorno_pts = np.array([])
+        
+        # Definir vectores de dirección esperados para cada lado
+        direcciones_esperadas = {
+            "Lado 1 (Top)": np.array([0, -1]),     # Hacia arriba
+            "Lado 2 (Right)": np.array([1, 0]),    # Hacia la derecha
+            "Lado 3 (Bottom)": np.array([0, 1]),   # Hacia abajo
+            "Lado 4 (Left)": np.array([-1, 0])     # Hacia la izquierda
+        }
         
         # Guardar los resultados de cada lado
         resultados_por_lado = {}
@@ -122,12 +131,25 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                 # Vector unitario del lado
                 lado_unit = lado_vec / lado_len
                 
-                # Vector perpendicular (rotación de 90 grados)
-                perp_unit = np.array([-lado_unit[1], lado_unit[0]])
+                # CORRECCIÓN: Asegurar que el vector perpendicular apunta en la dirección correcta
+                # El vector perpendicular debe apuntar hacia afuera de la palanquilla
+                direccion_esperada = direcciones_esperadas[nombre_lado]
+                
+                # Calcular el vector perpendicular inicial
+                perp_unit_initial = np.array([-lado_unit[1], lado_unit[0]])
+                
+                # Verificar si el vector perpendicular inicial apunta en la dirección esperada
+                # Si el producto escalar es positivo, están en la misma dirección
+                if np.dot(perp_unit_initial, direccion_esperada) > 0:
+                    perp_unit = perp_unit_initial
+                else:
+                    # Si no, invertir la dirección
+                    perp_unit = -perp_unit_initial
                 
                 # Inicializar para encontrar el punto más lejano
                 max_distancia = 0
                 punto_max = None
+                punto_proyectado = None
                 
                 # Buscar el punto más lejano en dirección perpendicular
                 for punto in contorno_pts:
@@ -148,16 +170,16 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                         # Distancia perpendicular
                         dist_perp = np.linalg.norm(vec_proj_to_punto)
                         
-                        # Si es la mayor distancia hasta ahora y tiene la dirección correcta
-                        if dist_perp > max_distancia:
-                            # Verificar dirección (producto escalar con vector perpendicular)
-                            if np.dot(vec_proj_to_punto, perp_unit) > 0:
-                                max_distancia = dist_perp
-                                punto_max = punto
-                                punto_proyectado = punto_proj
+                        # CORRECCIÓN: Verificar que el punto está en la dirección correcta
+                        # Calculamos el producto escalar del vector punto-proyección con la dirección esperada
+                        # Solo consideramos el punto si está en la dirección esperada para ese lado
+                        if dist_perp > max_distancia and np.dot(vec_proj_to_punto, direccion_esperada) > 0:
+                            max_distancia = dist_perp
+                            punto_max = punto
+                            punto_proyectado = punto_proj
                 
                 # Si encontramos un punto máximo
-                if punto_max is not None:
+                if punto_max is not None and punto_proyectado is not None:
                     # Convertir a enteros para dibujar
                     punto_max = tuple(punto_max.astype(int))
                     punto_proyectado = tuple(punto_proyectado.astype(int))
@@ -176,10 +198,6 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     
                     # Dibujar punto proyectado
                     cv2.circle(img_resultado, punto_proyectado, 3, (255, 255, 255), -1)
-                    
-                    # Dibujar vector X con una flecha
-                    # Calcular ángulo del vector perpendicular
-                    angle = math.atan2(perp_unit[1], perp_unit[0])
                     
                     # Dibujar línea desde el punto proyectado hasta el punto máximo
                     cv2.line(img_resultado, punto_proyectado, punto_max, (255, 255, 255), 1)

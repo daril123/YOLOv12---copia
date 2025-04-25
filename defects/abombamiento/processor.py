@@ -6,9 +6,7 @@ import pandas as pd
 from utils.utils import draw_arrow
 from utils.contorno import obtener_contorno_imagen, rotar_imagen_lado
 from .abombamiento import (
-    obtener_abombamiento,
     obtener_lado_rotacion_abombamiento,
-    visualizar_abombamiento,
     calcular_abombamiento
 )
 from .enhanced_visualization import visualizar_abombamiento_enhanced, generar_reporte_enhanced
