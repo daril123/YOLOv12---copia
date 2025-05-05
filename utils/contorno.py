@@ -28,20 +28,8 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02, t
                 class_names = model.names
         
         if not class_names:
-            class_names = ["palanquilla"]
-            print("No se encontraron nombres de clase en el modelo, usando valor por defecto")
-        
-        # Buscar el índice de la clase objetivo
-        target_indices = []
-        for idx, name in enumerate(class_names):
-            if name.lower() == target_class.lower():
-                target_indices.append(idx)
-                print(f"Clase objetivo '{target_class}' encontrada con índice {idx}")
-        
-        # Si no se encontró la clase objetivo, usar el primer índice
-        if not target_indices:
-            print(f"Advertencia: La clase '{target_class}' no se encontró en el modelo. Usando la primera clase disponible.")
-            target_indices = [0]
+            class_names = ["etiqueta", "palanquilla"]
+            print("No se encontraron nombres de clase en el modelo, usando valores por defecto")
         
         # Intentar varias configuraciones si la primera falla
         conf_thresholds = [conf_threshold, 0.25, 0.15]  # Probar con umbrales más bajos si es necesario
@@ -59,20 +47,58 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02, t
                 # Obtener los índices de clase y confianzas
                 cls_ids = resultado.boxes.cls.cpu().numpy()
                 confs = resultado.boxes.conf.cpu().numpy()
+                boxes = resultado.boxes.xyxy.cpu().numpy()
                 
-                # Buscar la máscara correspondiente a la clase objetivo
-                target_mask_idx = None
-                for i, cls_id in enumerate(cls_ids):
+                # Obtener las áreas de las cajas detectadas
+                areas = []
+                for box in boxes:
+                    x1, y1, x2, y2 = box
+                    area = (x2 - x1) * (y2 - y1)
+                    areas.append(area)
+                
+                # Imprimir información de diagnóstico sobre todas las detecciones
+                print("\nDetecciones encontradas:")
+                for i, (cls_id, conf, area) in enumerate(zip(cls_ids, confs, areas)):
                     cls_id_int = int(cls_id)
-                    if cls_id_int in target_indices:
+                    cls_name = class_names[cls_id_int] if cls_id_int < len(class_names) else f"class_{cls_id_int}"
+                    print(f"  Detección #{i}: Clase {cls_name} (ID: {cls_id_int}), Confianza {conf:.2f}, Área {area:.0f}px²")
+                
+                # MODIFICACIÓN IMPORTANTE: estrategia mejorada para seleccionar la palanquilla
+                target_mask_idx = None
+                
+                # 1. Buscar explícitamente class_1 (que suele ser la palanquilla según la imagen)
+                for i, cls_id in enumerate(cls_ids):
+                    if int(cls_id) == 1:  # Buscar explícitamente class_1
                         target_mask_idx = i
-                        cls_name = class_names[cls_id_int] if cls_id_int < len(class_names) else f"clase_{cls_id_int}"
-                        print(f"Se encontró {cls_name} con confianza {confs[i]}")
+                        print(f"Encontrado class_1 (palanquilla) con confianza {confs[i]:.2f}")
                         break
                 
-                # Si no encontramos la clase objetivo, probar con el siguiente umbral
+                # 2. Si no encontramos class_1, seleccionar la detección con el área más grande
                 if target_mask_idx is None:
-                    print(f"No se encontró la clase objetivo con umbral {threshold}. Probando con umbral más bajo.")
+                    if areas:
+                        target_mask_idx = np.argmax(areas)
+                        cls_id_int = int(cls_ids[target_mask_idx])
+                        cls_name = class_names[cls_id_int] if cls_id_int < len(class_names) else f"class_{cls_id_int}"
+                        print(f"No se encontró class_1. Seleccionando la detección más grande: {cls_name} con área {areas[target_mask_idx]:.0f}px²")
+                
+                # 3. Si aún no tenemos un índice válido, buscar la clase objetivo por nombre
+                if target_mask_idx is None:
+                    for i, cls_id in enumerate(cls_ids):
+                        cls_id_int = int(cls_id)
+                        cls_name = class_names[cls_id_int] if cls_id_int < len(class_names) else f"class_{cls_id_int}"
+                        if cls_name.lower() == target_class.lower():
+                            target_mask_idx = i
+                            print(f"Encontrado {target_class} con confianza {confs[i]:.2f}")
+                            break
+                
+                # 4. Si todavía no tenemos índice, usar el primero
+                if target_mask_idx is None and len(cls_ids) > 0:
+                    target_mask_idx = 0
+                    print(f"Usando la primera detección disponible como último recurso")
+                
+                # Si no hay detecciones, probar con el siguiente umbral
+                if target_mask_idx is None:
+                    print(f"No se encontraron detecciones válidas con umbral {threshold}. Probando con umbral más bajo.")
                     continue
                 
                 # Obtener la máscara correspondiente
@@ -103,7 +129,7 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02, t
                 kernel = np.ones((5, 5), np.uint8)
                 mask_img = cv2.morphologyEx(mask_img, cv2.MORPH_CLOSE, kernel)
                 mask_img = cv2.morphologyEx(mask_img, cv2.MORPH_OPEN, kernel)
-
+                
                 # Encontrar los contornos en la máscara
                 contornos, _ = cv2.findContours(mask_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 

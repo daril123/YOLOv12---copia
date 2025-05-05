@@ -41,9 +41,20 @@ class VertexDetector:
                             self.class_names = [yaml_data["names"][i] for i in sorted(yaml_data["names"].keys())]
                         print(f"Clases cargadas desde {yaml_path}: {self.class_names}")
                         
-                        # La clase objetivo es la primera por defecto
-                        if self.class_names:
-                            self.target_class = self.class_names[1]
+                        # CORRECCIÓN: Buscar específicamente la clase "palanquilla"
+                        palanquilla_idx = None
+                        for idx, name in enumerate(self.class_names):
+                            if name.lower() == "palanquilla":
+                                palanquilla_idx = idx
+                                break
+                        
+                        if palanquilla_idx is not None:
+                            self.target_class = self.class_names[palanquilla_idx]
+                            print(f"Clase objetivo 'palanquilla' encontrada en índice {palanquilla_idx}")
+                        else:
+                            # Si no se encuentra "palanquilla", usar la primera clase
+                            self.target_class = self.class_names[0]
+                            print(f"Clase 'palanquilla' no encontrada, usando clase por defecto: {self.target_class}")
             except Exception as e:
                 print(f"Error al cargar archivo YAML: {e}")
         else:
@@ -64,6 +75,7 @@ class VertexDetector:
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
             print(f"Modelo YOLO para detección de vértices cargado desde: {self.model_path}")
+            print(f"Clase objetivo configurada como: {self.target_class}")  # Diagnóstico adicional
             
             # Si no se pudieron cargar las clases desde YAML, usarlas del modelo
             if not self.class_names and hasattr(self.model, "names"):
@@ -72,12 +84,22 @@ class VertexDetector:
                     self.class_names = [self.model.names[i] for i in sorted(self.model.names.keys())]
                 else:
                     self.class_names = self.model.names
-                
-                # La clase objetivo es la primera por defecto
-                if self.class_names:
-                    self.target_class = self.class_names[1]
-                
                 print(f"Clases cargadas desde modelo: {self.class_names}")
+                
+                # CORRECCIÓN: Buscar específicamente la clase "palanquilla"
+                palanquilla_idx = None
+                for idx, name in enumerate(self.class_names):
+                    if name.lower() == "palanquilla":
+                        palanquilla_idx = idx
+                        break
+                
+                if palanquilla_idx is not None:
+                    self.target_class = self.class_names[palanquilla_idx]
+                    print(f"Clase objetivo 'palanquilla' encontrada en índice {palanquilla_idx}")
+                else:
+                    # Si no se encuentra "palanquilla", usar la primera clase
+                    self.target_class = self.class_names[0]
+                    print(f"Clase 'palanquilla' no encontrada, usando clase por defecto: {self.target_class}")
         except Exception as e:
             print(f"Error al cargar el modelo YOLO para vértices: {e}")
             self.model = None
