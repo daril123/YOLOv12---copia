@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 from utils.utils import draw_arrow
-from common.detector import analizar_direccion_grieta_mask  # Cambio importante aquí
+from common.detector import analizar_direccion_grieta_mask
 
 def classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping=None):
     """
@@ -29,7 +29,8 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result, clas
         'nucleo_esponjoso': [],
         'estrella': [],
         'rechupe': [],
-        'sopladura': []
+        'sopladura': [],
+        'etiqueta': []  # Nueva categoría para etiquetas
     }
     
     # Si no se proporciona un mapeo, crear uno basado en coincidencias de nombres
@@ -47,6 +48,8 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result, clas
                 class_mapping[class_name] = 'sopladura'
             elif 'estrella' in class_lower:
                 class_mapping[class_name] = 'estrella'
+            elif 'etiqueta' in class_lower:  # Nuevo mapeo para etiquetas
+                class_mapping[class_name] = 'etiqueta'
             else:
                 # Si no hay coincidencia, usar el nombre original
                 class_mapping[class_name] = class_name
@@ -340,6 +343,40 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result, clas
             # Las sopladuras se clasifican como un tipo específico
             classified_detections['sopladura'].append(detection)
     
+    # PASO 7: PROCESAR ETIQUETAS
+    # Buscar clases que correspondan a etiquetas según el mapeo
+    etiqueta_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'etiqueta']
+    
+    for etiqueta_class in etiqueta_classes:
+        print(f"Procesando clase de etiqueta: {etiqueta_class}")
+        for detection in detections[etiqueta_class]:
+            x1, y1, x2, y2 = detection['bbox']
+            
+            # Obtener la máscara si está disponible
+            mask = None
+            if masks is not None and 'mask_index' in detection:
+                mask_idx = detection['mask_index']
+                mask_data = masks[mask_idx].data.cpu().numpy()
+                mask = (mask_data > 0.5).astype(np.uint8) * 255
+                
+                # Asegurarse de que la máscara tiene el tamaño correcto
+                if len(mask.shape) > 2:
+                    mask = mask[0]
+                if mask.shape != (image.shape[0], image.shape[1]):
+                    mask_resized = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+                    mask_resized[y1:y2, x1:x2] = cv2.resize(mask, (x2-x1, y2-y1))
+                    mask = mask_resized
+            else:
+                # Para etiquetas, crear una máscara rectangular simplificada
+                mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+                mask[y1:y2, x1:x2] = 255  # Máscara rectangular completa
+            
+            # Guardar la máscara en la detección
+            detection['mask'] = mask
+            
+            # Las etiquetas van a la lista de etiquetas para ser procesadas por OCR
+            classified_detections['etiqueta'].append(detection)
+    
     return classified_detections
 
 def visualize_results_with_masks(image, classified_detections):
@@ -368,7 +405,8 @@ def visualize_results_with_masks(image, classified_detections):
         'rechupe': (128, 0, 128),                # Morado
         'sopladura': (0, 128, 128),              # Verde-azulado
         'romboidad': (200, 200, 200),            # Gris claro
-        'abombamiento': (100, 100, 255)          # Rosa
+        'abombamiento': (100, 100, 255),         # Rosa
+        'etiqueta': (0, 255, 0)                  # Verde (para etiquetas)
     }
     
     # Dibujar cada tipo de defecto
@@ -455,8 +493,12 @@ def visualize_results_with_masks(image, classified_detections):
             label = ""
             
             # Para análisis geométrico, mostrar etiqueta especial
+            
             if defect_type in ['romboidad', 'abombamiento']:
                 label = f"{defect_type.capitalize()} (Análisis Geométrico)"
+            # Para etiquetas, mostrar etiqueta especial
+            elif defect_type == 'etiqueta':
+                label = f"Etiqueta (OCR)"
             # Para grietas, incluir dirección si está disponible
             elif (defect_type in ['grietas_diagonales', 'grietas_medio_camino', 'grietas_corner']) and 'direccion' in detection:
                 label = f"{defect_type.replace('_', ' ').title()} ({conf:.2f}) - {detection['direccion']}"

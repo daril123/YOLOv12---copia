@@ -29,7 +29,7 @@ from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
-
+from defects.etiqueta.label_extractor import LabelExtractor  # Nueva importación para etiquetas
 
 def model_fn(model_dir=None):
     """
@@ -74,6 +74,9 @@ def model_fn(model_dir=None):
     abombamiento_processor = AbombamientoProcessor()
     romboidad_processor = RomboidadProcessor()
     
+    # Nuevo: Inicializar el procesador de etiquetas
+    label_extractor = LabelExtractor()
+    
     return {
         'vertex_detector': vertex_detector,  # Para detectar contornos y vértices
         'defect_detector': defect_detector,  # Para detectar defectos
@@ -87,7 +90,8 @@ def model_fn(model_dir=None):
             'estrella': estrella_processor,
             'sopladura': sopladura_processor,
             'abombamiento': abombamiento_processor,
-            'romboidad': romboidad_processor
+            'romboidad': romboidad_processor,
+            'etiqueta': label_extractor  # Nuevo: Procesador de etiquetas
         }
     }
 
@@ -248,6 +252,57 @@ def predict_fn(input_data, models, output_dir=None):
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
+    # NUEVO: Procesar etiquetas (labels) detectadas por el vertex detector
+    etiqueta_detections = []
+    
+    # Obtener resultados del vertex detector para la imagen actual
+    vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
+    
+    # Buscar la clase "etiqueta" en los resultados del vertex detector
+    if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
+        class_names = vertex_detector.model.names
+        etiqueta_class_id = None
+        
+        # Encontrar el ID de clase para "etiqueta"
+        for id, name in class_names.items():
+            if name.lower() == "etiqueta":
+                etiqueta_class_id = id
+                break
+        
+        if etiqueta_class_id is not None:
+            # Procesar todas las cajas y encontrar las de clase "etiqueta"
+            boxes = vertex_result.boxes
+            for i, box in enumerate(boxes):
+                cls_id = int(box.cls[0].item())
+                if cls_id == etiqueta_class_id:
+                    # Esto es una etiqueta
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    conf = float(box.conf[0].item())
+                    
+                    etiqueta_detections.append({
+                        'bbox': (x1, y1, x2, y2),
+                        'conf': conf,
+                        'class': 'etiqueta',
+                        'cls_id': cls_id
+                    })
+    
+    # Si encontramos alguna etiqueta, procesarlas con OCR
+    results = {}  # Inicializar aquí antes de usarlo
+    
+    if etiqueta_detections and 'etiqueta' in models['processors']:
+        label_extractor = models['processors']['etiqueta']
+        label_results = label_extractor.process(
+            etiqueta_detections,
+            image,
+            corners=vertices,
+            zone_masks=zone_masks,
+            image_name=image_name,
+            output_dir=output_dir
+        )
+        
+        # Añadir los resultados de las etiquetas a los resultados
+        results['etiqueta'] = label_results
+    
     # 6. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
@@ -311,10 +366,8 @@ def predict_fn(input_data, models, output_dir=None):
     )
     
     # Procesar cada tipo de defecto con su procesador específico
-    results = {
-        'abombamiento': abombamiento_results,
-        'romboidad': romboidad_results
-    }
+    results['abombamiento'] = abombamiento_results
+    results['romboidad'] = romboidad_results
     
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
@@ -334,6 +387,7 @@ def predict_fn(input_data, models, output_dir=None):
         'zones_img': zones_img,
         'zone_masks': zone_masks,
         'detections': detections,
+        'etiqueta_detections': etiqueta_detections,  # Añadir las detecciones de etiquetas
         'yolo_result': yolo_result,
         'classified_detections': classified_detections,
         'processed_results': results,
@@ -461,6 +515,32 @@ def output_fn(prediction_results, output_dir, input_data):
                     
                     output_paths[property_type]['visualizations'][viz_name] = viz_path
     
+    # Save etiqueta results specifically
+    if 'etiqueta' in prediction_results['processed_results']:
+        etiqueta_results = prediction_results['processed_results']['etiqueta']
+        
+        # Create etiqueta directory
+        etiqueta_dir = os.path.join(image_output_dir, "etiqueta")
+        os.makedirs(etiqueta_dir, exist_ok=True)
+        
+        # Save report paths
+        if 'report_paths' in etiqueta_results:
+            output_paths['etiqueta_reports'] = etiqueta_results['report_paths']
+        
+        # Save visualizations
+        if 'visualizations' in etiqueta_results:
+            if 'etiqueta' not in output_paths:
+                output_paths['etiqueta'] = {}
+            
+            output_paths['etiqueta']['visualizations'] = {}
+            
+            for viz_name, viz_img in etiqueta_results['visualizations'].items():
+                viz_path = os.path.join(etiqueta_dir, f"{name}_{viz_name}{ext}")
+                cv2.imwrite(viz_path, viz_img)
+                output_paths['etiqueta']['visualizations'][viz_name] = viz_path
+    
+    return output_paths
+    
     return output_paths
 
 
@@ -583,6 +663,7 @@ def main():
     parser.add_argument("--output", type=str, 
                        default=r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Clasificacion_por_zonas",
                        help="Directorio donde guardar los resultados")
+    
     
     parser.add_argument("--model-dir", type=str, default=None,
                        help="Directorio donde se encuentran los modelos (opcional)")
