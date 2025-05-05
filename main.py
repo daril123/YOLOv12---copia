@@ -42,14 +42,14 @@ def model_fn(model_dir=None):
         Dictionary con los modelos cargados
     """
     # Rutas predeterminadas si no se especifica un directorio
-    vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\vertices\best.pt"
-    defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\PACC_results\defectos_tipoB_yolov11\weights\best.pt"
+    vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Vertex\modelo_1.pt"
+    defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Defect\modelo_2.pt"
     
-    if model_dir:
+    if model_dir:   
         # Si se proporciona un directorio, buscar los modelos allí
-        vertex_path = os.path.join(model_dir, "vertex_model.pt")
-        defect_path = os.path.join(model_dir, "defect_model.pt")
-        
+        vertex_path = os.path.join(model_dir, "modelo_1.pt")
+        defect_path = os.path.join(model_dir, "modelo_2.pt")
+
         if os.path.exists(vertex_path):
             vertex_model_path = vertex_path
         if os.path.exists(defect_path):
@@ -159,9 +159,11 @@ def predict_fn(input_data, models, output_dir=None):
     print(f"Detectando vértices en: {image_path}")
     try:
         # Usar la función mejorada directamente desde utils.contorno
+        # ahora pasando la clase objetivo desde el detector de vértices
         from utils.contorno import obtener_contorno_imagen
         vertices, contorno_principal, palanquilla_mask = obtener_contorno_imagen(
-            image, vertex_detector.model, vertex_detector.conf_threshold)
+            image, vertex_detector.model, vertex_detector.conf_threshold, 
+            target_class=vertex_detector.target_class)
         
         success = vertices is not None and len(vertices) == 4
         
@@ -224,7 +226,8 @@ def predict_fn(input_data, models, output_dir=None):
                 # Actualizar la imagen y detectar los nuevos vértices
                 image = image_rotada
                 vertices_aux, contorno_aux, palanquilla_mask_aux = obtener_contorno_imagen(
-                    image, vertex_detector.model, vertex_detector.conf_threshold)
+                    image, vertex_detector.model, vertex_detector.conf_threshold, 
+                    target_class=vertex_detector.target_class)
                 
                 if vertices_aux is not None and len(vertices_aux) == 4:
                     vertices = vertices_aux
@@ -252,10 +255,40 @@ def predict_fn(input_data, models, output_dir=None):
     if not detections:
         print("No se detectaron defectos en esta imagen.")
     
-    # 7. Clasificar los defectos según su posición en las zonas
-    classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result)
+    # 7. Crear mapeo de clases basado en los nombres de clase del modelo de defectos
+    class_mapping = {}
+    if defect_detector.class_names:
+        print("Creando mapeo de clases basado en modelo de defectos:")
+        # Mostrar los nombres de clase disponibles
+        print(f"Clases en el modelo: {defect_detector.class_names}")
+        
+        # Mapear clases del modelo a las categorías esperadas en el código
+        for idx, name in enumerate(defect_detector.class_names):
+            name_lower = name.lower()
+            if 'grieta' in name_lower:
+                class_mapping[name] = 'grieta'
+                print(f"  - '{name}' mapeado a 'grieta'")
+            elif 'punto' in name_lower:
+                class_mapping[name] = 'puntos'
+                print(f"  - '{name}' mapeado a 'puntos'")
+            elif 'rechup' in name_lower:
+                class_mapping[name] = 'rechupe'
+                print(f"  - '{name}' mapeado a 'rechupe'")
+            elif 'sopladura' in name_lower:
+                class_mapping[name] = 'sopladura'
+                print(f"  - '{name}' mapeado a 'sopladura'")
+            elif 'estrella' in name_lower:
+                class_mapping[name] = 'estrella'
+                print(f"  - '{name}' mapeado a 'estrella'")
+            else:
+                # Si no hay coincidencia, usar el nombre original
+                class_mapping[name] = name
+                print(f"  - '{name}' mantenido como '{name}'")
     
-    # 8. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
+    # 8. Clasificar los defectos según su posición en las zonas
+    classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
+    
+    # 9. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
     # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
@@ -268,7 +301,7 @@ def predict_fn(input_data, models, output_dir=None):
         mask=palanquilla_mask
     )
     
-    # 9. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
+    # 10. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,
@@ -307,7 +340,6 @@ def predict_fn(input_data, models, output_dir=None):
         'palanquilla_mask': palanquilla_mask,
         'image_procesada': image
     }
-
 
 def output_fn(prediction_results, output_dir, input_data):
     """

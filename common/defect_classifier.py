@@ -5,7 +5,7 @@ import os
 from utils.utils import draw_arrow
 from common.detector import analizar_direccion_grieta_mask  # Cambio importante aquí
 
-def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
+def classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping=None):
     """
     Clasifica los defectos según su tipo y ubicación utilizando las máscaras de segmentación
     en lugar de bounding boxes para mayor precisión.
@@ -15,6 +15,7 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
         zone_masks: Diccionario con máscaras para cada zona
         image: Imagen original donde se detectaron los defectos
         yolo_result: Resultado original de YOLO con máscaras de segmentación
+        class_mapping: Diccionario para mapear nombres de clase (opcional)
     
     Returns:
         classified_detections: Diccionario con defectos clasificados
@@ -31,18 +32,43 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
         'sopladura': []
     }
     
+    # Si no se proporciona un mapeo, crear uno basado en coincidencias de nombres
+    if class_mapping is None:
+        class_mapping = {}
+        for class_name in detections.keys():
+            class_lower = class_name.lower()
+            if 'grieta' in class_lower:
+                class_mapping[class_name] = 'grieta'
+            elif 'punto' in class_lower:
+                class_mapping[class_name] = 'puntos'
+            elif 'rechup' in class_lower:
+                class_mapping[class_name] = 'rechupe'
+            elif 'sopladura' in class_lower:
+                class_mapping[class_name] = 'sopladura'
+            elif 'estrella' in class_lower:
+                class_mapping[class_name] = 'estrella'
+            else:
+                # Si no hay coincidencia, usar el nombre original
+                class_mapping[class_name] = class_name
+    
+    print(f"Mapeo de clases para defectos: {class_mapping}")
+    
     # Obtener máscaras de YOLO si están disponibles
     masks = None
     if hasattr(yolo_result, 'masks') and yolo_result.masks is not None:
         masks = yolo_result.masks
     
     # PASO 1: PROCESAMIENTO DE GRIETAS
-    if 'grieta' in detections:
+    # Buscar clases que correspondan a grietas según el mapeo
+    grieta_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'grieta']
+    
+    for grieta_class in grieta_classes:
+        print(f"Procesando clase de grieta: {grieta_class}")
         # Colección temporal de grietas normales (no diagonales)
         grietas_normales = []
         
         # Clasificar grietas
-        for detection in detections['grieta']:
+        for detection in detections[grieta_class]:
             x1, y1, x2, y2 = detection['bbox']
             
             # Obtener la máscara si está disponible
@@ -123,8 +149,12 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
                 classified_detections['grietas_medio_camino'].append(detection)
     
     # PASO 3: PROCESAR PUNTOS
-    if 'puntos' in detections:
-        for detection in detections['puntos']:
+    # Buscar clases que correspondan a puntos según el mapeo
+    punto_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'puntos']
+    
+    for punto_class in punto_classes:
+        print(f"Procesando clase de puntos: {punto_class}")
+        for detection in detections[punto_class]:
             x1, y1, x2, y2 = detection['bbox']
             
             # Obtener la máscara si está disponible
@@ -172,9 +202,13 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
             elif in_green and in_yellow:
                 classified_detections['inclusion_no_metalica'].append(detection)
     
-    # PASO 4: PROCESAR ESTRELLAS (siempre en zona roja)
-    if 'estrella' in detections:
-        for detection in detections['estrella']:
+    # PASO 4: PROCESAR ESTRELLAS
+    # Buscar clases que correspondan a estrellas según el mapeo
+    estrella_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'estrella']
+    
+    for estrella_class in estrella_classes:
+        print(f"Procesando clase de estrella: {estrella_class}")
+        for detection in detections[estrella_class]:
             x1, y1, x2, y2 = detection['bbox']
             
             # Obtener la máscara si está disponible
@@ -214,9 +248,13 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
             # Las estrellas siempre van a la lista de estrellas (típicamente en zona roja)
             classified_detections['estrella'].append(detection)
     
-    # PASO 5: PROCESAR RECHUPES (siempre en zona roja)
-    if 'rechupe' in detections:
-        for detection in detections['rechupe']:
+    # PASO 5: PROCESAR RECHUPES
+    # Buscar clases que correspondan a rechupes según el mapeo
+    rechupe_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'rechupe']
+    
+    for rechupe_class in rechupe_classes:
+        print(f"Procesando clase de rechupe: {rechupe_class}")
+        for detection in detections[rechupe_class]:
             x1, y1, x2, y2 = detection['bbox']
             
             # Obtener la máscara si está disponible
@@ -256,9 +294,13 @@ def classify_defects_with_masks(detections, zone_masks, image, yolo_result):
             # Los rechupes siempre van a la lista de rechupes (típicamente en zona roja)
             classified_detections['rechupe'].append(detection)
     
-    # PASO 6: PROCESAR SOPLADURAS (pueden estar en cualquier zona)
-    if 'sopladura' in detections:
-        for detection in detections['sopladura']:
+    # PASO 6: PROCESAR SOPLADURAS
+    # Buscar clases que correspondan a sopladuras según el mapeo
+    sopladura_classes = [cls for cls in detections.keys() if class_mapping.get(cls, cls) == 'sopladura']
+    
+    for sopladura_class in sopladura_classes:
+        print(f"Procesando clase de sopladura: {sopladura_class}")
+        for detection in detections[sopladura_class]:
             x1, y1, x2, y2 = detection['bbox']
             
             # Obtener la máscara si está disponible

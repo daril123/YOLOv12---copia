@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from ultralytics.utils.ops import scale_image
 
-def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02):
+def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02, target_class="palanquilla"):
     """
     Obtiene el contorno de la palanquilla en la imagen usando un modelo YOLO
     
@@ -11,6 +11,7 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02):
         model: Modelo YOLO cargado
         conf_threshold: Umbral de confianza para detección (reducido para mejorar detección)
         f_epsilon: Factor para la aproximación de polígonos
+        target_class: Nombre de la clase objetivo (por defecto "palanquilla")
     
     Returns:
         contorno: Puntos del contorno ordenados [top-left, top-right, bottom-right, bottom-left]
@@ -18,6 +19,30 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02):
         mask_img: Máscara binaria de la palanquilla
     """
     try:
+        # Obtener los nombres de las clases del modelo
+        class_names = None
+        if hasattr(model, "names"):
+            if isinstance(model.names, dict):
+                class_names = [model.names[i] for i in sorted(model.names.keys())]
+            else:
+                class_names = model.names
+        
+        if not class_names:
+            class_names = ["palanquilla"]
+            print("No se encontraron nombres de clase en el modelo, usando valor por defecto")
+        
+        # Buscar el índice de la clase objetivo
+        target_indices = []
+        for idx, name in enumerate(class_names):
+            if name.lower() == target_class.lower():
+                target_indices.append(idx)
+                print(f"Clase objetivo '{target_class}' encontrada con índice {idx}")
+        
+        # Si no se encontró la clase objetivo, usar el primer índice
+        if not target_indices:
+            print(f"Advertencia: La clase '{target_class}' no se encontró en el modelo. Usando la primera clase disponible.")
+            target_indices = [0]
+        
         # Intentar varias configuraciones si la primera falla
         conf_thresholds = [conf_threshold, 0.25, 0.15]  # Probar con umbrales más bajos si es necesario
         
@@ -31,7 +56,26 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02):
                     print(f"No se detectaron máscaras con umbral {threshold}. Probando con umbral más bajo.")
                     continue
                 
-                # Obtener las máscaras binarias
+                # Obtener los índices de clase y confianzas
+                cls_ids = resultado.boxes.cls.cpu().numpy()
+                confs = resultado.boxes.conf.cpu().numpy()
+                
+                # Buscar la máscara correspondiente a la clase objetivo
+                target_mask_idx = None
+                for i, cls_id in enumerate(cls_ids):
+                    cls_id_int = int(cls_id)
+                    if cls_id_int in target_indices:
+                        target_mask_idx = i
+                        cls_name = class_names[cls_id_int] if cls_id_int < len(class_names) else f"clase_{cls_id_int}"
+                        print(f"Se encontró {cls_name} con confianza {confs[i]}")
+                        break
+                
+                # Si no encontramos la clase objetivo, probar con el siguiente umbral
+                if target_mask_idx is None:
+                    print(f"No se encontró la clase objetivo con umbral {threshold}. Probando con umbral más bajo.")
+                    continue
+                
+                # Obtener la máscara correspondiente
                 mask_img = resultado.masks.data.cpu().numpy()
                 mask_img = np.moveaxis(mask_img, 0, -1)  # (H, W, N)
                 
@@ -44,8 +88,12 @@ def obtener_contorno_imagen(image, model, conf_threshold=0.35, f_epsilon=0.02):
                 mask_img = scale_image(mask_img, image.shape)
                 mask_img = np.moveaxis(mask_img, -1, 0)  # (N, H, W)
                 
-                # Tomar la primera máscara (la de mayor confianza)
-                mask_img = mask_img[0]
+                # Seleccionar la máscara de la clase objetivo
+                if target_mask_idx < mask_img.shape[0]:
+                    mask_img = mask_img[target_mask_idx]
+                else:
+                    print(f"Índice de máscara fuera de rango: {target_mask_idx} >= {mask_img.shape[0]}")
+                    continue
                 
                 # Convertir la máscara en un array de NumPy
                 mask_img = mask_img.astype(np.uint8)

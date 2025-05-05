@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import torch
+import yaml
 from ultralytics import YOLO
 from ultralytics.utils.ops import scale_image
 from utils.utils import order_points
@@ -16,7 +17,37 @@ class VertexDetector:
             model_path: Ruta al modelo YOLO entrenado para la detección de vértices
         """
         # Ruta al modelo YOLO
-        self.model_path = model_path if model_path else r"D:\Trabajo modelos\PACC\YOLOv12 - copia\vertices\best.pt"
+        self.model_path = model_path if model_path else r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\modelo_1.pt"
+        
+        # Obtener el nombre base del modelo (sin extensión) para buscar el YAML con el mismo nombre
+        model_base_name = os.path.splitext(os.path.basename(self.model_path))[0]
+        model_dir = os.path.dirname(self.model_path)
+        yaml_path = os.path.join(model_dir, f"{model_base_name}.yaml")
+        
+        print(f"Buscando archivo YAML en: {yaml_path}")
+        
+        self.class_names = []
+        self.target_class = "palanquilla"  # Clase por defecto
+        
+        if os.path.exists(yaml_path):
+            try:
+                with open(yaml_path, 'r', encoding='utf-8') as f:
+                    yaml_data = yaml.safe_load(f)
+                    if "names" in yaml_data:
+                        # Manejar tanto si names es una lista como si es un diccionario
+                        if isinstance(yaml_data["names"], list):
+                            self.class_names = yaml_data["names"]
+                        else:
+                            self.class_names = [yaml_data["names"][i] for i in sorted(yaml_data["names"].keys())]
+                        print(f"Clases cargadas desde {yaml_path}: {self.class_names}")
+                        
+                        # La clase objetivo es la primera por defecto
+                        if self.class_names:
+                            self.target_class = self.class_names[1]
+            except Exception as e:
+                print(f"Error al cargar archivo YAML: {e}")
+        else:
+            print(f"Archivo YAML no encontrado: {yaml_path}")
         
         # Configuración de CUDA
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -33,6 +64,20 @@ class VertexDetector:
             self.model = YOLO(self.model_path)
             self.model.to(self.device)
             print(f"Modelo YOLO para detección de vértices cargado desde: {self.model_path}")
+            
+            # Si no se pudieron cargar las clases desde YAML, usarlas del modelo
+            if not self.class_names and hasattr(self.model, "names"):
+                # Convertir el diccionario de nombres a una lista
+                if isinstance(self.model.names, dict):
+                    self.class_names = [self.model.names[i] for i in sorted(self.model.names.keys())]
+                else:
+                    self.class_names = self.model.names
+                
+                # La clase objetivo es la primera por defecto
+                if self.class_names:
+                    self.target_class = self.class_names[1]
+                
+                print(f"Clases cargadas desde modelo: {self.class_names}")
         except Exception as e:
             print(f"Error al cargar el modelo YOLO para vértices: {e}")
             self.model = None
@@ -60,9 +105,9 @@ class VertexDetector:
                 print(f"Error al cargar la imagen: {image_path}")
                 return None, False, None
             
-            # Usar la función mejorada para obtener el contorno
+            # Usar la función mejorada para obtener el contorno, pasando la clase objetivo
             vertices, contorno_principal, mask_img = obtener_contorno_imagen(
-                image, self.model, self.conf_threshold)
+                image, self.model, self.conf_threshold, target_class=self.target_class)
             
             if vertices is None or len(vertices) != 4:
                 print("No se pudo obtener un contorno válido. Intentando método alternativo...")
