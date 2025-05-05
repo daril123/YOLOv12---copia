@@ -73,10 +73,29 @@ class LabelExtractor:
         """
         
         try:
+            # Check if input is valid
+            if img_etiqueta is None or img_etiqueta.size == 0 or img_etiqueta.shape[0] < 10 or img_etiqueta.shape[1] < 10:
+                print("Error: Imagen de etiqueta inválida o demasiado pequeña para OCR")
+                return {
+                    'code': 'INVALID_IMAGE',
+                    'quality': 'INVALID_IMAGE',
+                    'line': 'INVALID_IMAGE',
+                    'error': 'Invalid or too small image'
+                }
+                
             # Convert to grayscale if not already
             if len(img_etiqueta.shape) > 2:
                 img_etiqueta = cv2.cvtColor(img_etiqueta, cv2.COLOR_BGR2GRAY)
                 
+            # Resize if too small for good OCR
+            if img_etiqueta.shape[0] < 50 or img_etiqueta.shape[1] < 50:
+                factor = max(50 / img_etiqueta.shape[0], 50 / img_etiqueta.shape[1])
+                new_size = (int(img_etiqueta.shape[1] * factor), int(img_etiqueta.shape[0] * factor))
+                img_etiqueta = cv2.resize(img_etiqueta, new_size, interpolation=cv2.INTER_CUBIC)
+                
+            # Enhance contrast for better OCR
+            img_etiqueta = cv2.equalizeHist(img_etiqueta)
+            
             # Encode image for API
             _, img_encoded = cv2.imencode('.jpg', img_etiqueta)
             encoded = base64.b64encode(img_encoded).decode("utf-8")
@@ -108,9 +127,9 @@ class LabelExtractor:
             print(f"Error in OCR processing: {e}")
             # Return default values if failed
             return {
-                'code': 'UNKNOWN',
-                'quality': 'UNKNOWN',
-                'line': 'UNKNOWN',
+                'code': 'OCR_ERROR',
+                'quality': 'OCR_ERROR',
+                'line': 'OCR_ERROR',
                 'error': str(e)
             }
     

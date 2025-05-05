@@ -252,44 +252,60 @@ def predict_fn(input_data, models, output_dir=None):
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
-    # NUEVO: Procesar etiquetas (labels) detectadas por el vertex detector
     etiqueta_detections = []
-    
+
     # Obtener resultados del vertex detector para la imagen actual
-    vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
-    
-    # Buscar la clase "etiqueta" en los resultados del vertex detector
-    if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
-        class_names = vertex_detector.model.names
-        etiqueta_class_id = None
+    try:
+        vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
         
-        # Encontrar el ID de clase para "etiqueta"
-        for id, name in class_names.items():
-            if name.lower() == "etiqueta":
-                etiqueta_class_id = id
-                break
-        
-        if etiqueta_class_id is not None:
-            # Procesar todas las cajas y encontrar las de clase "etiqueta"
-            boxes = vertex_result.boxes
-            for i, box in enumerate(boxes):
-                cls_id = int(box.cls[0].item())
-                if cls_id == etiqueta_class_id:
-                    # Esto es una etiqueta
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    conf = float(box.conf[0].item())
-                    
-                    etiqueta_detections.append({
-                        'bbox': (x1, y1, x2, y2),
-                        'conf': conf,
-                        'class': 'etiqueta',
-                        'cls_id': cls_id
-                    })
-    
+        # Buscar la clase "etiqueta" en los resultados del vertex detector
+        if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
+            class_names = vertex_detector.model.names
+            etiqueta_class_id = None
+            
+            # Mostrar todas las clases disponibles y sus IDs para diagnóstico
+            print(f"Clases disponibles en el modelo de vértices: {class_names}")
+            
+            # Encontrar el ID de clase para "etiqueta"
+            for id, name in class_names.items():
+                if isinstance(name, str) and name.lower() == "etiqueta":
+                    etiqueta_class_id = id
+                    print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
+                    break
+            
+            # Si no encontramos "etiqueta", buscar "class_0" que podría ser la etiqueta
+            if etiqueta_class_id is None and 0 in class_names:
+                etiqueta_class_id = 0
+                print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
+            
+            if etiqueta_class_id is not None:
+                # Procesar todas las cajas y encontrar las de clase "etiqueta"
+                boxes = vertex_result.boxes
+                for i, box in enumerate(boxes):
+                    cls_id = int(box.cls[0].item())
+                    if cls_id == etiqueta_class_id:
+                        # Esto es una etiqueta
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                        conf = float(box.conf[0].item())
+                        
+                        print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
+                        
+                        etiqueta_detections.append({
+                            'bbox': (x1, y1, x2, y2),
+                            'conf': conf,
+                            'class': 'etiqueta',
+                            'cls_id': cls_id
+                        })
+    except Exception as e:
+        print(f"Error al buscar etiquetas: {e}")
+        import traceback
+        traceback.print_exc()
+
     # Si encontramos alguna etiqueta, procesarlas con OCR
     results = {}  # Inicializar aquí antes de usarlo
-    
+
     if etiqueta_detections and 'etiqueta' in models['processors']:
+        print(f"Procesando {len(etiqueta_detections)} etiqueta(s) con OCR...")
         label_extractor = models['processors']['etiqueta']
         label_results = label_extractor.process(
             etiqueta_detections,
@@ -302,7 +318,8 @@ def predict_fn(input_data, models, output_dir=None):
         
         # Añadir los resultados de las etiquetas a los resultados
         results['etiqueta'] = label_results
-    
+    else:
+        print("No se detectaron etiquetas en la imagen o no está disponible el procesador de etiquetas.")
     # 6. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
@@ -516,6 +533,8 @@ def output_fn(prediction_results, output_dir, input_data):
                     output_paths[property_type]['visualizations'][viz_name] = viz_path
     
     # Save etiqueta results specifically
+            
+    # Save etiqueta results specifically
     if 'etiqueta' in prediction_results['processed_results']:
         etiqueta_results = prediction_results['processed_results']['etiqueta']
         
@@ -541,50 +560,99 @@ def output_fn(prediction_results, output_dir, input_data):
     
     return output_paths
     
-    return output_paths
 
 
-def process_image(image_path, output_dir=None, model_dir=None):
+def process(self, etiqueta_detections, image, corners=None, zone_masks=None, image_name=None, output_dir=None):
     """
-    Procesa una imagen con el flujo completo
+    Process all detected labels
     
     Args:
-        image_path: Ruta a la imagen a procesar
-        output_dir: Directorio donde guardar los resultados
-        model_dir: Directorio donde están los modelos
+        etiqueta_detections: List of label detections from vertex detector
+        image: Original image
+        corners: Corners of the palanquilla (optional)
+        zone_masks: Zone masks (optional)
+        image_name: Image name (without extension)
+        output_dir: Output directory for saving reports
         
     Returns:
-        output_paths: Rutas donde se guardaron los resultados
+        processed_data: Dictionary with processing results
     """
-    # Valor predeterminado para el directorio de salida
-    if output_dir is None:
-        output_dir = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Clasificacion_por_zonas"
+    results = []
+    visualizations = {}
     
-    try:
-        # 1. Cargar los modelos
-        models = model_fn(model_dir)
+    # Process each detected label
+    for i, detection in enumerate(etiqueta_detections):
+        x1, y1, x2, y2 = detection['bbox']
+        conf = detection.get('conf', 0)
         
-        # 2. Procesar la entrada
-        input_data = input_fn(image_path)
+        # Extract the label region
+        label_image = image[y1:y2, x1:x2].copy()
         
-        # Crear carpeta específica para esta imagen
-        image_name = input_data['name']
-        image_dir = os.path.join(output_dir, image_name)
-        os.makedirs(image_dir, exist_ok=True)
+        # Process the label with OCR
+        print(f"Procesando etiqueta #{i+1} con OCR...")
+        ocr_data = self.extract_label_content(label_image)
         
-        # 3. Realizar predicciones
-        prediction_results = predict_fn(input_data, models, output_dir)
+        # Combine data
+        label_data = {
+            'id': i+1,
+            'code': ocr_data.get('code', 'UNKNOWN'),
+            'quality': ocr_data.get('quality', 'UNKNOWN'),
+            'line': ocr_data.get('line', 'UNKNOWN'),
+            'conf': conf,
+            'bbox': (x1, y1, x2, y2)
+        }
         
-        # 4. Generar y guardar salidas
-        output_paths = output_fn(prediction_results, output_dir, input_data)
+        # Create visualization
+        viz_img = label_image.copy()
+        # Add text overlay on the visualization
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(viz_img, f"Code: {ocr_data.get('code', 'UNKNOWN')}", (10, 20), font, 0.5, (0, 0, 255), 2)
+        cv2.putText(viz_img, f"Quality: {ocr_data.get('quality', 'UNKNOWN')}", (10, 40), font, 0.5, (0, 0, 255), 2)
+        cv2.putText(viz_img, f"Line: {ocr_data.get('line', 'UNKNOWN')}", (10, 60), font, 0.5, (0, 0, 255), 2)
         
-        return output_paths
+        # Save visualization
+        visualization_key = f"etiqueta_{i+1}"
+        visualizations[visualization_key] = viz_img
+        
+        # Also save the original label image for reference
+        visualization_key_orig = f"etiqueta_orig_{i+1}"
+        visualizations[visualization_key_orig] = label_image
+        
+        results.append(label_data)
     
-    except Exception as e:
-        print(f"Error al procesar la imagen {image_path}: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    # If there are results and we have image name and output directory, generate a report
+    report_paths = None
+    if results and image_name and output_dir:
+        # Create directory for this type - ensure it's named "etiqueta"
+        etiqueta_dir = os.path.join(output_dir, image_name, "etiqueta")
+        os.makedirs(etiqueta_dir, exist_ok=True)
+        
+        # Generate the report in the specific folder
+        report_paths = self.generate_report(image_name, results, etiqueta_dir)
+        print(f"Reporte de etiquetas generado en: {report_paths[0]}")
+        print(f"Reporte de texto de etiquetas generado en: {report_paths[1]}")
+        
+        # Guardar también en formato JSON
+        json_path = os.path.join(etiqueta_dir, f"{image_name}_etiqueta_ocr.json")
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                import json
+                json.dump(results, f, ensure_ascii=False, indent=4)
+            print(f"JSON de etiquetas guardado en: {json_path}")
+            
+            # Añadir el path del JSON a los report_paths
+            if isinstance(report_paths, tuple):
+                report_paths = report_paths + (json_path,)
+            else:
+                report_paths = (report_paths, json_path)
+        except Exception as e:
+            print(f"Error al guardar JSON de etiquetas: {e}")
+    
+    return {
+        'processed_data': results,
+        'visualizations': visualizations,
+        'report_paths': report_paths
+    }
 
 
 def process_directory(directory_path, output_dir=None, model_dir=None):
