@@ -2,12 +2,12 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
-
-from utils.utils import draw_arrow, find_extreme_points
+from scipy.spatial import distance as dist
+import matplotlib.pyplot as plt
 
 class SopladuraProcessor:
     """
-    Procesador para sopladuras
+    Procesador para sopladuras que usa el código proporcionado
     """
     
     def __init__(self):
@@ -16,142 +16,191 @@ class SopladuraProcessor:
         """
         self.name = "sopladura"
     
-    def measure_sopladura(self, sopladura_mask, corners=None, sopladura_img=None, bbox=None):
+    def determinar_lado_sopladura(self, center_point, corners):
         """
-        Mide el diámetro de una sopladura en píxeles
+        Determina en qué lado de la palanquilla se encuentra la sopladura
         
         Args:
-            sopladura_mask: Máscara binaria de la sopladura (ROI recortado)
-            corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left] en coordenadas globales
-            sopladura_img: Imagen recortada de la sopladura (opcional, para visualizaciones)
-            bbox: Bounding box de la sopladura en coordenadas globales (x1, y1, x2, y2)
+            center_point: Centro de la sopladura (x, y)
+            corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left]
             
         Returns:
-            metrics: Diccionario con la métrica diámetro en píxeles
+            lado: 'arriba', 'abajo', 'izquierda' o 'derecha'
         """
-        # Encontrar contornos de la sopladura
-        contours, _ = cv2.findContours(sopladura_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Calcular centro de la palanquilla
+        center_x = sum(corner[0] for corner in corners) / 4
+        center_y = sum(corner[1] for corner in corners) / 4
         
-        if not contours:
-            return {
-                'diametro': 0
-            }
+        # Calcular la distancia a cada borde
+        top_edge_dist = abs(center_point[1] - min(corner[1] for corner in corners))
+        bottom_edge_dist = abs(center_point[1] - max(corner[1] for corner in corners))
+        left_edge_dist = abs(center_point[0] - min(corner[0] for corner in corners))
+        right_edge_dist = abs(center_point[0] - max(corner[0] for corner in corners))
         
-        # Obtener el contorno principal (el más grande)
-        contour = max(contours, key=cv2.contourArea)
+        # Encontrar la distancia mínima
+        min_dist = min(top_edge_dist, bottom_edge_dist, left_edge_dist, right_edge_dist)
         
-        # CALCULAR DIÁMETRO: distancia máxima entre dos puntos del contorno
-        local_pt1, local_pt2, diametro = find_extreme_points(contour)
-        
-        # Para visualización, necesitamos las coordenadas globales
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            global_pt1 = (local_pt1[0] + x1, local_pt1[1] + y1)
-            global_pt2 = (local_pt2[0] + x1, local_pt2[1] + y1)
+        # Devolver el lado correspondiente
+        if min_dist == top_edge_dist:
+            return "arriba"
+        elif min_dist == bottom_edge_dist:
+            return "abajo"
+        elif min_dist == left_edge_dist:
+            return "izquierda"
         else:
-            global_pt1 = local_pt1
-            global_pt2 = local_pt2
+            return "derecha"
+    
+    def analisis_completo_sopladuras(self, imagen_roi, direccion, umbral_sopladura=20):
+        """
+        Analisis completo de sopladuras con umbral mejorado y mejor visualización
         
-        # Visualización si se proporciona imagen
-        if sopladura_img is not None:
-            viz_img = sopladura_img.copy() if len(sopladura_img.shape) == 3 else cv2.cvtColor(sopladura_img, cv2.COLOR_GRAY2BGR)
+        Args:
+            imagen_roi: ROI de la sopladura
+            direccion: Dirección para medir ('arriba', 'abajo', 'izquierda', 'derecha')
+            umbral_sopladura: Valor umbral para detectar manchas negras (default: 20)
             
-            # Dibujar el contorno de la sopladura en el ROI
-            cv2.drawContours(viz_img, [contour], -1, (0, 255, 0), 2)
-            
-            # Dibujar los puntos extremos (para el diámetro)
-            if local_pt1 is not None and local_pt2 is not None:
-                cv2.circle(viz_img, local_pt1, 5, (255, 0, 0), -1)
-                cv2.circle(viz_img, local_pt2, 5, (255, 0, 0), -1)
-                
-                # Dibujar flecha para el diámetro
-                draw_arrow(viz_img, local_pt1, local_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px", (5, -10))
-            
-            # Guardar la visualización del ROI
-            cv2.imwrite("temp_sopladura_analysis_roi.jpg", viz_img)
-            
-            # Si tenemos suficiente información para crear una visualización global
-            full_img = None
-            
-            if corners is not None and bbox is not None:
-                try:
-                    # Estimar un tamaño razonable para la imagen completa
-                    x_values = [p[0] for p in corners]
-                    y_values = [p[1] for p in corners]
-                    min_x, max_x = min(x_values), max(x_values)
-                    min_y, max_y = min(y_values), max(y_values)
-                    
-                    # Añadir un poco de margen
-                    margin = 50
-                    img_width = max_x - min_x + 2*margin
-                    img_height = max_y - min_y + 2*margin
-                    
-                    # Asegurar tamaño mínimo
-                    img_width = max(img_width, 800)
-                    img_height = max(img_height, 800)
-                    
-                    # Crear imagen en blanco
-                    full_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
-                    
-                    # Ajustar las coordenadas para que estén dentro de la imagen
-                    adjusted_corners = [(x - min_x + margin, y - min_y + margin) for x, y in corners]
-                    
-                    # Convertir los puntos extremos a coordenadas ajustadas
-                    adjusted_pt1 = (global_pt1[0] - min_x + margin, global_pt1[1] - min_y + margin)
-                    adjusted_pt2 = (global_pt2[0] - min_x + margin, global_pt2[1] - min_y + margin)
-                    
-                    # Dibujar el contorno de la palanquilla
-                    cv2.polylines(full_img, [np.array(adjusted_corners)], True, (0, 255, 0), 2)
-                    
-                    # Dibujar los vértices numerados
-                    for i, corner in enumerate(adjusted_corners):
-                        cv2.circle(full_img, (int(corner[0]), int(corner[1])), 8, (0, 0, 255), -1)
-                        cv2.putText(full_img, str(i+1), (int(corner[0])-4, int(corner[1])+4), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    
-                    # Dibujar la posición de la sopladura
-                    if bbox is not None:
-                        x1, y1, x2, y2 = bbox
-                        adj_x1, adj_y1 = x1 - min_x + margin, y1 - min_y + margin
-                        adj_x2, adj_y2 = x2 - min_x + margin, y2 - min_y + margin
-                        cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 0, 255), 2)
-                    
-                    # Dibujar el contorno de la sopladura
-                    adjusted_contour = contour.copy()
-                    adjusted_contour[:,:,0] = adjusted_contour[:,:,0] + int(adj_x1)
-                    adjusted_contour[:,:,1] = adjusted_contour[:,:,1] + int(adj_y1)
-                    cv2.drawContours(full_img, [adjusted_contour], -1, (0, 255, 0), 2)
-                    
-                    # Dibujar los puntos extremos de la sopladura en la vista global
-                    cv2.circle(full_img, (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 5, (255, 0, 0), -1)
-                    cv2.circle(full_img, (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 5, (255, 0, 0), -1)
-                    
-                    # Dibujar la flecha para el diámetro
-                    draw_arrow(full_img, 
-                              (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 
-                              (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 
-                              (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
-                    
-                    # Guardar la visualización completa
-                    cv2.imwrite("temp_sopladura_analysis_full.jpg", full_img)
-                except Exception as e:
-                    print(f"Error al crear visualización global para sopladura: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            # Retornar información adicional para el visualizador de resultados
+        Returns:
+            Diccionario con resultados
+        """
+        # Convertir a escala de grises si es necesario
+        if len(imagen_roi.shape) == 3:
+            gris = cv2.cvtColor(imagen_roi, cv2.COLOR_BGR2GRAY)
+        else:
+            gris = imagen_roi.copy()
+        
+        # 2. GENERAR MAPA DE CALOR
+        # Ecualizar histograma para mejorar contraste
+        ecualizada = cv2.equalizeHist(gris)
+        
+        # Aplicar suavizado bilateral para reducir ruido pero preservar bordes
+        suavizada = cv2.bilateralFilter(ecualizada, 9, 75, 75)
+        
+        # Aplicar mapa de color HOT
+        mapa_hot = cv2.applyColorMap(suavizada, cv2.COLORMAP_HOT)
+        
+        # Convertir mapa de calor a escala de grises para procesamiento
+        mapa_gris = cv2.cvtColor(mapa_hot, cv2.COLOR_BGR2GRAY)
+        
+        # 3. DETECTAR MANCHAS NEGRAS (SOPLADURAS) EN EL MAPA DE CALOR
+        # Umbralizar para detectar áreas muy oscuras (negras) - UMBRAL ACTUALIZADO A 20
+        _, binaria = cv2.threshold(gris, umbral_sopladura, 255, cv2.THRESH_BINARY_INV)
+        
+        # Operaciones morfológicas para limpiar ruido - Ajustadas para mejor detección
+        kernel = np.ones((3,3), np.uint8)
+        binaria_limpia = cv2.morphologyEx(binaria, cv2.MORPH_OPEN, kernel, iterations=1)
+        binaria_limpia = cv2.morphologyEx(binaria_limpia, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # 4. ENCONTRAR CONTORNOS DE LAS MANCHAS NEGRAS
+        contornos, _ = cv2.findContours(binaria_limpia, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contornos:
             return {
-                'diametro': round(diametro, 2),
-                'local_visualization': viz_img,
-                'global_visualization': full_img,
-                'local_pt1': local_pt1,
-                'local_pt2': local_pt2,
-                'global_pt1': global_pt1,
-                'global_pt2': global_pt2
+                'L': 0,
+                'D': 0,
+                'direccion': direccion,
+                'area': 0
             }
+        
+        # 5. IDENTIFICAR LA MANCHA NEGRA CON MAYOR ÁREA
+        areas = [cv2.contourArea(contorno) for contorno in contornos]
+        contornos_ordenados = [x for _, x in sorted(zip(areas, contornos), key=lambda pair: pair[0], reverse=True)]
+        areas_ordenadas = sorted(areas, reverse=True)
+        
+        contorno_principal = contornos_ordenados[0]
+        area_principal = areas_ordenadas[0]
+        
+        # 6. MEDIR LONGITUD MÁXIMA DE LA MANCHA PRINCIPAL
+        puntos = contorno_principal.reshape(-1, 2)
+        
+        # Calcular el diámetro de Feret (distancia máxima entre dos puntos)
+        D = dist.cdist(puntos, puntos)
+        i, j = np.unravel_index(D.argmax(), D.shape)
+        
+        # Puntos extremos
+        punto1 = tuple(puntos[i])
+        punto2 = tuple(puntos[j])
+        
+        # Longitud máxima
+        longitud_maxima = D.max()
+        
+        # 7. MEDIR DISTANCIAS A LOS BORDES
+        altura, ancho = gris.shape
+        
+        # Puntos extremos en cada dirección
+        punto_superior = min(puntos, key=lambda p: p[1])
+        punto_inferior = max(puntos, key=lambda p: p[1])
+        punto_izquierdo = min(puntos, key=lambda p: p[0])
+        punto_derecho = max(puntos, key=lambda p: p[0])
+        
+        # Calcular distancias a los bordes
+        distancia_arriba = punto_superior[1]
+        distancia_abajo = altura - punto_inferior[1]
+        distancia_izquierda = punto_izquierdo[0]
+        distancia_derecha = ancho - punto_derecho[0]
+        
+        # Diccionario de distancias y puntos
+        distancias = {
+            'arriba': (distancia_arriba, punto_superior),
+            'abajo': (distancia_abajo, punto_inferior),
+            'izquierda': (distancia_izquierda, punto_izquierdo),
+            'derecha': (distancia_derecha, punto_derecho)
+        }
+        
+        # Usar la distancia en la dirección especificada
+        if direccion in distancias:
+            distancia_valor, punto = distancias[direccion]
+        else:
+            # Si no se especificó una dirección válida, usar la mínima
+            distancia_valor = min(distancia_arriba, distancia_abajo, distancia_izquierda, distancia_derecha)
+            # Encontrar el lado correspondiente a la distancia mínima
+            for dir_name, (dist_val, pt) in distancias.items():
+                if dist_val == distancia_valor:
+                    direccion = dir_name
+                    punto = pt
+                    break
+        
+        # 8. VISUALIZAR RESULTADOS EN EL MAPA DE CALOR
+        imagen_resultado = mapa_hot.copy()
+        
+        # Dibujar contorno de la mancha negra principal con grosor 2
+        cv2.drawContours(imagen_resultado, [contorno_principal], -1, (0, 255, 0), 2)
+        
+        # Dibujar línea de longitud máxima más gruesa como en imagen de referencia
+        cv2.line(imagen_resultado, punto1, punto2, (255, 255, 255), 2)
+        
+        # Dibujar la línea de distancia según la dirección con mayor grosor
+        punto = distancias[direccion][1]
+        
+        # Mejorar visualización de la línea de distancia (más similar a primera imagen)
+        if direccion == 'arriba':
+            cv2.line(imagen_resultado, punto, (punto[0], 0), (0, 255, 255), 2)
+        elif direccion == 'abajo':
+            cv2.line(imagen_resultado, punto, (punto[0], altura), (0, 255, 255), 2)
+        elif direccion == 'izquierda':
+            cv2.line(imagen_resultado, punto, (0, punto[1]), (0, 255, 255), 2)
+        elif direccion == 'derecha':
+            cv2.line(imagen_resultado, punto, (ancho, punto[1]), (0, 255, 255), 2)
+        
+        # Añadir texto con mediciones con mejor formato
+        cv2.putText(imagen_resultado, f"Area: {area_principal:.2f} px²", 
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(imagen_resultado, f"L: {longitud_maxima:.2f} px", 
+                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(imagen_resultado, f"Dist {direccion}: {distancia_valor:.2f} px", 
+                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Dibujar contornos secundarios más claros
+        if len(contornos) > 1:
+            for i in range(1, min(5, len(contornos))):
+                cv2.drawContours(imagen_resultado, [contornos_ordenados[i]], -1, (255, 0, 255), 1)
         
         return {
-            'diametro': round(diametro, 2)
+            'L': round(longitud_maxima, 2),
+            'D': round(distancia_valor, 2),
+            'direccion': direccion,
+            'area': round(area_principal, 2),
+            'visualization': imagen_resultado,
+            'binaria': binaria_limpia  # Incluir la imagen binaria para depuración
         }
     
     def generate_report(self, image_name, sopladuras_data, output_dir):
@@ -169,10 +218,8 @@ class SopladuraProcessor:
         # Crear directorio si no existe
         os.makedirs(output_dir, exist_ok=True)
         
-        # Crear un DataFrame con los datos, excluyendo objetos complejos
-        df = pd.DataFrame([{k: v for k, v in sopladura.items() if k not in ['visualization', 'rect', 'box', 'local_visualization', 
-                                                                        'global_visualization', 'local_pt1', 'local_pt2', 
-                                                                        'global_pt1', 'global_pt2']} 
+        # Crear un DataFrame con los datos
+        df = pd.DataFrame([{k: v for k, v in sopladura.items() if k not in ['visualization', 'binaria']} 
                            for sopladura in sopladuras_data])
         
         # Formato del informe
@@ -181,7 +228,7 @@ class SopladuraProcessor:
         # Guardar como CSV
         df.to_csv(report_path, index=False)
         
-        # También generar una versión en formato de texto para fácil visualización
+        # También generar una versión en formato de texto
         text_report_path = os.path.join(output_dir, f"{image_name}_sopladura_report.txt")
         
         with open(text_report_path, 'w') as f:
@@ -190,7 +237,10 @@ class SopladuraProcessor:
             
             for i, sopladura in enumerate(sopladuras_data):
                 f.write(f"SOPLADURA #{i+1}\n")
-                f.write(f"  Diámetro: {sopladura['diametro']} píxeles\n")
+                f.write(f"  Longitud (L): {sopladura['L']} píxeles\n")
+                f.write(f"  Distancia a borde (D): {sopladura['D']} píxeles\n")
+                f.write(f"  Dirección del borde: {sopladura['direccion']}\n")
+                f.write(f"  Área: {sopladura['area']} píxeles²\n")
                 f.write(f"  Confianza: {sopladura['conf']:.2f}\n\n")
         
         print(f"Reporte generado en: {report_path}")
@@ -200,21 +250,21 @@ class SopladuraProcessor:
     
     def process(self, detections, image, corners, zone_masks, image_name=None, output_dir=None):
         """
-        Procesa todas las sopladuras detectadas
-        
-        Args:
-            detections: Lista de detecciones de sopladuras
-            image: Imagen original
-            corners: Esquinas de la palanquilla
-            zone_masks: Máscaras de zonas
-            
-        Returns:
-            processed_data: Diccionario con los resultados del procesamiento
+        Procesa las sopladuras detectadas:
+        1. Filtra solo las sopladuras en zona "verde" (intermedio exterior)
+        2. Selecciona las 3 con mayor área
+        3. Determina el lado de cada sopladura
+        4. Aplica el análisis completo con umbral mejorado a 20
+        5. Guarda imágenes para depuración
         """
         results = []
         visualizations = {}
         
-        # Procesar cada detección
+        # Lista para almacenar sopladuras en zona verde con su área
+        sopladuras_en_verde = []
+        
+        # 1. FILTRAR SOPLADURAS EN ZONA VERDE
+        print(f"Procesando {len(detections)} posibles sopladuras...")
         for i, detection in enumerate(detections):
             x1, y1, x2, y2 = detection['bbox']
             conf = detection.get('conf', 0)
@@ -222,7 +272,7 @@ class SopladuraProcessor:
             # Extraer la máscara
             mask = detection.get('mask', None)
             if mask is None:
-                # Si no hay máscara, crear una a partir de la ROI
+                # Si no hay máscara, crear una a partir del ROI
                 roi = image[y1:y2, x1:x2].copy()
                 if len(roi.shape) == 3:
                     roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -232,43 +282,111 @@ class SopladuraProcessor:
                 # Binarizar para obtener la máscara
                 _, roi_mask = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
                 
-                # Usar sólo el ROI para el análisis
-                sopladura_mask = roi_mask
+                # Crear máscara global
+                full_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+                full_mask[y1:y2, x1:x2] = roi_mask
             else:
-                # Si hay máscara, recortar al ROI
-                sopladura_mask = mask[y1:y2, x1:x2]
+                full_mask = mask
             
-            # Medir la sopladura
-            metrics = self.measure_sopladura(sopladura_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2))
+            # Verificar si la sopladura está en la zona verde
+            overlap = cv2.bitwise_and(full_mask, zone_masks['verde'])
+            overlap_area = cv2.countNonZero(overlap)
             
-            # Combinar datos
-            sopladura_data = {
-                'id': i+1,
-                'diametro': metrics['diametro'],
-                'conf': conf,
-                'bbox': (x1, y1, x2, y2)
-            }
-            
-            # Guardar las visualizaciones si existen
-            if 'local_visualization' in metrics:
-                visualization_key = f"sopladura_{i+1}_local"
-                visualizations[visualization_key] = metrics['local_visualization']
-            
-            if 'global_visualization' in metrics:
-                visualization_key = f"sopladura_{i+1}_global"
-                visualizations[visualization_key] = metrics['global_visualization']
-            
-            results.append(sopladura_data)
+            # Si hay solapamiento significativo con la zona verde
+            if overlap_area > 0:
+                # Calcular área total de la sopladura
+                area = cv2.countNonZero(full_mask)
+                
+                # Guardar la sopladura con su área y ROI
+                sopladuras_en_verde.append({
+                    'area': area,
+                    'bbox': (x1, y1, x2, y2),
+                    'conf': conf,
+                    'id': i+1,
+                    'roi': image[y1:y2, x1:x2].copy(),
+                    'mask': full_mask
+                })
         
-        # Si hay resultados, generar un reporte
-        report_paths = None
+        # 2. SELECCIONAR LAS 3 SOPLADURAS CON MAYOR ÁREA
+        sopladuras_en_verde.sort(key=lambda x: x['area'], reverse=True)
+        top_sopladuras = sopladuras_en_verde[:min(3, len(sopladuras_en_verde))]
+        
+        print(f"Seleccionadas {len(top_sopladuras)} sopladuras de la zona verde con mayor área")
+        
+        # Crear imagen para visualización de depuración - copia de la imagen original
+        debug_img = image.copy()
+        
+        # 3. PROCESAR CADA SOPLADURA SELECCIONADA
+        for i, sopladura in enumerate(top_sopladuras):
+            bbox = sopladura['bbox']
+            x1, y1, x2, y2 = bbox
+            roi = sopladura['roi']
+            
+            # Calcular el centro de la sopladura
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            
+            # Determinar el lado de la sopladura
+            lado = self.determinar_lado_sopladura((center_x, center_y), corners)
+            print(f"Sopladura #{i+1} detectada en el lado: {lado}")
+            
+            # Aplicar el análisis completo de sopladuras con el lado determinado y umbral=20
+            umbral_sopladura = 20  # Umbral actualizado para mejor detección
+            resultado = self.analisis_completo_sopladuras(roi, lado, umbral_sopladura)
+            
+            # Agregar datos adicionales
+            resultado['conf'] = sopladura['conf']
+            resultado['bbox'] = bbox
+            resultado['id'] = i+1
+            
+            # Guardar visualización
+            visualization_key = f"sopladura_{i+1}"
+            visualizations[visualization_key] = resultado['visualization']
+            
+            # Guardar también la imagen binaria para depuración
+            if 'binaria' in resultado:
+                binary_key = f"sopladura_{i+1}_binaria"
+                visualizations[binary_key] = cv2.cvtColor(resultado['binaria'], cv2.COLOR_GRAY2BGR)
+            
+            # Marcar esta sopladura en la imagen de depuración
+            cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(debug_img, f"#{i+1}: {lado}", (x1, y1-10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            # Agregar a resultados
+            results.append(resultado)
+        
+        # Generar reporte y guardar imágenes de depuración si hay resultados
         if results and image_name and output_dir:
             # Crear directorio para este tipo de defecto
             defect_dir = os.path.join(output_dir, image_name, self.name)
             os.makedirs(defect_dir, exist_ok=True)
             
+            # Guardar imagen de depuración con todas las sopladuras marcadas
+            debug_img_path = os.path.join(defect_dir, f"{image_name}_sopladuras_seleccionadas.jpg")
+            cv2.imwrite(debug_img_path, debug_img)
+            print(f"Imagen de depuración guardada en: {debug_img_path}")
+            
+            # Guardar ROIs individuales para cada sopladura
+            for i, sopladura in enumerate(top_sopladuras):
+                roi_path = os.path.join(defect_dir, f"{image_name}_sopladura_{i+1}_roi.jpg")
+                cv2.imwrite(roi_path, sopladura['roi'])
+                
+                # Guardar también la visualización del análisis
+                viz_path = os.path.join(defect_dir, f"{image_name}_sopladura_{i+1}_analisis.jpg")
+                cv2.imwrite(viz_path, visualizations[f"sopladura_{i+1}"])
+                
+                # Guardar imagen binaria
+                if f"sopladura_{i+1}_binaria" in visualizations:
+                    bin_path = os.path.join(defect_dir, f"{image_name}_sopladura_{i+1}_binaria.jpg")
+                    cv2.imwrite(bin_path, visualizations[f"sopladura_{i+1}_binaria"])
+                
+                print(f"ROI y análisis de sopladura #{i+1} guardados en: {roi_path}, {viz_path}")
+            
             # Generar el reporte en la carpeta específica
             report_paths = self.generate_report(image_name, results, defect_dir)
+        else:
+            report_paths = None
         
         return {
             'processed_data': results,
