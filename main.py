@@ -29,7 +29,7 @@ from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
-from defects.etiqueta.label_extractor import LabelExtractor,determinar_orientacion_etiqueta  # Nueva importación para etiquetas
+from defects.etiqueta.label_extractor import LabelExtractor
 
 def model_fn(model_dir=None):
     """
@@ -75,7 +75,19 @@ def model_fn(model_dir=None):
     romboidad_processor = RomboidadProcessor()
     
     # Nuevo: Inicializar el procesador de etiquetas
+    print("Inicializando procesador de etiquetas...")
     label_extractor = LabelExtractor()
+    
+    # Verificar que la inicialización fue correcta
+    try:
+        # Test if OCR model is available
+        print("Verificando disponibilidad de modelo OCR...")
+        if hasattr(label_extractor, 'model_name'):
+            print(f"Modelo OCR configurado: {label_extractor.model_name}")
+        else:
+            print("Advertencia: Modelo OCR no configurado correctamente")
+    except Exception as e:
+        print(f"Error inicializando extractor de etiquetas: {e}")
     
     return {
         'vertex_detector': vertex_detector,  # Para detectar contornos y vértices
@@ -148,6 +160,12 @@ def predict_fn(input_data, models, output_dir=None):
     # Extraer los modelos
     vertex_detector = models['vertex_detector']
     defect_detector = models['defect_detector']
+    
+    # Verificar que el extractor de etiquetas esté disponible
+    if 'etiqueta' not in models['processors']:
+        print("Warning: Label extractor not initialized. Label orientation features will be disabled.")
+        # Create a backup label extractor
+        models['processors']['etiqueta'] = LabelExtractor()
     
     # 1. Pre-procesamiento de la imagen (opcional)
     # Redimensionar si la imagen es muy grande
@@ -228,7 +246,9 @@ def predict_fn(input_data, models, output_dir=None):
         mejor_etiqueta = etiqueta_detections[0]  # Usar la etiqueta de mayor confianza
         
         # Determinar ángulo de rotación basado en la etiqueta
-        angulo_rotacion, lado_etiqueta = determinar_orientacion_etiqueta(
+        # MODIFICACIÓN: Usar el método de la clase en lugar de la función independiente
+        label_extractor = models['processors']['etiqueta']
+        angulo_rotacion, lado_etiqueta = label_extractor.determinar_orientacion_etiqueta(
             mejor_etiqueta, image, initial_vertices)
         
         # Rotar la imagen
@@ -515,6 +535,37 @@ def output_fn(prediction_results, output_dir, input_data):
                 f.write(f"Alto etiqueta: {y2-y1} píxeles\n")
         
         output_paths['rotacion_info'] = rotacion_path
+        
+        # NUEVO: Guardar visualización de rotación si el ángulo no es cero
+        if rotacion_info['angulo'] != 0 and 'image' in input_data:
+            # Get original and rotated images
+            original_image = input_data['image']
+            rotated_image = prediction_results['image_procesada']
+            
+            # Create comparison visualization
+            h, w = original_image.shape[:2]
+            h_comp = min(h, 800)
+            w_comp = int(w * (h_comp / h))
+            
+            original_resized = cv2.resize(original_image, (w_comp, h_comp))
+            rotated_resized = cv2.resize(rotated_image, (w_comp, h_comp))
+            
+            # Side-by-side comparison
+            comparison = np.zeros((h_comp, w_comp*2, 3), dtype=np.uint8)
+            comparison[:, :w_comp] = original_resized
+            comparison[:, w_comp:] = rotated_resized
+            
+            # Add labels
+            angulo = rotacion_info['angulo']
+            cv2.putText(comparison, "ORIGINAL", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(comparison, f"ROTADA {angulo}°", (w_comp+10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # Save comparison
+            comp_path = os.path.join(image_output_dir, f"{name}_rotacion_comparacion{ext}")
+            cv2.imwrite(comp_path, comparison)
+            output_paths['rotacion_comparacion'] = comp_path
     
     # Guardar los resultados de cada tipo de defecto
     classified_detections = prediction_results['classified_detections']

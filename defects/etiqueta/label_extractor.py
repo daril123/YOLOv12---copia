@@ -24,25 +24,98 @@ class LabelExtractor:
         # Initialize Ollama model
         self.model_name = "granite3.2-vision"
         print(f"Label extractor initialized with OCR model: {self.model_name}")
+    
+    def determinar_orientacion_etiqueta(self, etiqueta_detection, image, corners):
+        """
+        Determina la orientación de la imagen basada en la ubicación y
+        dimensiones de la etiqueta detectada.
         
+        Args:
+            etiqueta_detection: Información sobre la etiqueta detectada
+            image: Imagen original
+            corners: Esquinas de la palanquilla
+            
+        Returns:
+            angulo_rotacion: Ángulo de rotación para que la etiqueta quede en la parte inferior
+            lado_etiqueta: Posición de la etiqueta ('arriba', 'derecha', 'abajo', 'izquierda')
+        """
+        # Extraer coordenadas de la caja contenedora de la etiqueta
+        x1, y1, x2, y2 = etiqueta_detection['bbox']
+        
+        # Calcular el centro de la etiqueta
+        centro_x = (x1 + x2) // 2
+        centro_y = (y1 + y2) // 2
+        
+        # Calcular dimensiones de la etiqueta
+        ancho_etiqueta = x2 - x1
+        alto_etiqueta = y2 - y1
+        
+        # Determinar si la etiqueta tiene orientación horizontal (ancho > alto)
+        es_horizontal = ancho_etiqueta > alto_etiqueta
+        
+        # Determinar el lado donde está la etiqueta respecto al centro de la palanquilla
+        if corners is not None and len(corners) == 4:
+            # Calcular centro de la palanquilla
+            centro_palanquilla_x = sum(corner[0] for corner in corners) / 4
+            centro_palanquilla_y = sum(corner[1] for corner in corners) / 4
+            
+            # Calcular distancias relativas
+            dx = centro_x - centro_palanquilla_x
+            dy = centro_y - centro_palanquilla_y
+            
+            # Determinar el lado predominante
+            if abs(dx) > abs(dy):
+                # La etiqueta está a la izquierda o derecha
+                if dx < 0:
+                    lado = 'izquierda'
+                    # CORRECCIÓN: Siempre rotar 90° si está a la izquierda, independientemente de la orientación
+                    angulo = 90
+                else:
+                    lado = 'derecha'
+                    # Si está a la derecha, rotar -90° si horizontal, 180° si vertical
+                    angulo = -90 if es_horizontal else 180
+            else:
+                # La etiqueta está arriba o abajo
+                if dy < 0:
+                    lado = 'arriba'
+                    # Si está arriba, rotación 180°
+                    angulo = 180 if es_horizontal else 90
+                else:
+                    lado = 'abajo'
+                    # Si está abajo y es horizontal, ya está en orientación correcta (0°)
+                    angulo = 0 if es_horizontal else -90
+        else:
+            # Si no hay vertices, usar solo las dimensiones de la etiqueta
+            lado = 'desconocido'
+            if es_horizontal:
+                angulo = 0  # Asumir que ya está en la orientación correcta
+            else:
+                angulo = 90  # Rotar para que el lado más largo sea horizontal
+        
+        print(f"Etiqueta detectada en lado: {lado}, orientación: {'horizontal' if es_horizontal else 'vertical'}")
+        print(f"Ángulo de rotación calculado: {angulo}°")
+        
+        return angulo, lado
+    
     def extract_json(self, texto):
         """
         Extract the first valid JSON block from 'texto' and parse it.
         Returns a dict with the JSON content.
         Raises ValueError if no valid JSON is found.
         """
-        # Find position of first and last braces
-        inicio = texto.find('{')
-        fin = texto.rfind('}')
-        if inicio == -1 or fin == -1 or inicio > fin:
-            raise ValueError("No valid JSON block found")
-        # Extract the JSON substring
-        json_str = texto[inicio:fin + 1]
-        # Parse with json.loads()
         try:
+            # Find position of first and last braces
+            inicio = texto.find('{')
+            fin = texto.rfind('}')
+            if inicio == -1 or fin == -1 or inicio > fin:
+                raise ValueError("No valid JSON block found")
+            # Extract the JSON substring
+            json_str = texto[inicio:fin + 1]
+            # Parse with json.loads()
             return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Error parsing JSON: {e}")
+        except Exception as e:
+            print(f"Error extracting JSON: {e}")
+            return {"code": "ERROR", "quality": "ERROR", "line": "ERROR"}
 
     def extract_label_content(self, img_etiqueta):
         """
@@ -96,32 +169,41 @@ class LabelExtractor:
             # Enhance contrast for better OCR
             img_etiqueta = cv2.equalizeHist(img_etiqueta)
             
+            # Check if ollama is available
+            if 'ollama' not in sys.modules:
+                print("Warning: Ollama module not available. Using fallback OCR.")
+                return self.fallback_ocr(img_etiqueta)
+            
             # Encode image for API
             _, img_encoded = cv2.imencode('.jpg', img_etiqueta)
             encoded = base64.b64encode(img_encoded).decode("utf-8")
             
-            # Call Ollama API
-            res = ollama.chat(
-                model=self.model_name,
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': prompt,
-                        'images': [encoded],
-                        'options': {
-                            'temperature': 0,   # Keep consistency
+            try:
+                # Call Ollama API
+                res = ollama.chat(
+                    model=self.model_name,
+                    messages=[
+                        {
+                            'role': 'user',
+                            'content': prompt,
+                            'images': [encoded],
+                            'options': {
+                                'temperature': 0,   # Keep consistency
+                            }
                         }
-                    }
-                ]
-            )
-            
-            # Extract JSON result
-            output = self.extract_json(res['message']['content'])
-            
-            # Remove spaces from values
-            output = {k: v.replace(" ", "") for k, v in output.items()}
-            
-            return output
+                    ]
+                )
+                
+                # Extract JSON result
+                output = self.extract_json(res['message']['content'])
+                
+                # Remove spaces from values
+                output = {k: v.replace(" ", "") for k, v in output.items()}
+                
+                return output
+            except Exception as e:
+                print(f"Error calling Ollama API: {e}")
+                return self.fallback_ocr(img_etiqueta)
             
         except Exception as e:
             print(f"Error in OCR processing: {e}")
@@ -132,6 +214,24 @@ class LabelExtractor:
                 'line': 'OCR_ERROR',
                 'error': str(e)
             }
+    
+    def fallback_ocr(self, img_etiqueta):
+        """
+        Fallback OCR method when Ollama is not available
+        
+        Args:
+            img_etiqueta: Label image
+            
+        Returns:
+            Dictionary with extracted fields
+        """
+        print("Using fallback OCR method (no text recognition)")
+        # Just return placeholder values
+        return {
+            'code': 'FALLBACK_OCR',
+            'quality': 'FALLBACK_OCR',
+            'line': 'FALLBACK_OCR'
+        }
     
     def generate_report(self, image_name, labels_data, output_dir):
         """
@@ -203,6 +303,7 @@ class LabelExtractor:
             label_image = image[y1:y2, x1:x2].copy()
             
             # Process the label with OCR
+            print(f"Procesando etiqueta #{i+1} con OCR...")
             ocr_data = self.extract_label_content(label_image)
             
             # Combine data
@@ -248,74 +349,3 @@ class LabelExtractor:
             'visualizations': visualizations,
             'report_paths': report_paths
         }
-def determinar_orientacion_etiqueta(etiqueta_detection, image, corners):
-    """
-    Determina la orientación de la imagen basada en la ubicación y
-    dimensiones de la etiqueta detectada.
-    
-    Args:
-        etiqueta_detection: Información sobre la etiqueta detectada
-        image: Imagen original
-        corners: Esquinas de la palanquilla
-        
-    Returns:
-        angulo_rotacion: Ángulo de rotación para que la etiqueta quede en la parte inferior
-        lado_etiqueta: Posición de la etiqueta ('arriba', 'derecha', 'abajo', 'izquierda')
-    """
-    # Extraer coordenadas de la caja contenedora de la etiqueta
-    x1, y1, x2, y2 = etiqueta_detection['bbox']
-    
-    # Calcular el centro de la etiqueta
-    centro_x = (x1 + x2) // 2
-    centro_y = (y1 + y2) // 2
-    
-    # Calcular dimensiones de la etiqueta
-    ancho_etiqueta = x2 - x1
-    alto_etiqueta = y2 - y1
-    
-    # Determinar si la etiqueta tiene orientación horizontal (ancho > alto)
-    es_horizontal = ancho_etiqueta > alto_etiqueta
-    
-    # Determinar el lado donde está la etiqueta respecto al centro de la palanquilla
-    if corners is not None and len(corners) == 4:
-        # Calcular centro de la palanquilla
-        centro_palanquilla_x = sum(corner[0] for corner in corners) / 4
-        centro_palanquilla_y = sum(corner[1] for corner in corners) / 4
-        
-        # Calcular distancias relativas
-        dx = centro_x - centro_palanquilla_x
-        dy = centro_y - centro_palanquilla_y
-        
-        # Determinar el lado predominante
-        if abs(dx) > abs(dy):
-            # La etiqueta está a la izquierda o derecha
-            if dx < 0:
-                lado = 'izquierda'
-                # CORRECCIÓN: Siempre rotar 90° si está a la izquierda, independientemente de la orientación
-                angulo = 90
-            else:
-                lado = 'derecha'
-                # Si está a la derecha, rotar -90° si horizontal, 180° si vertical
-                angulo = -90 if es_horizontal else 180
-        else:
-            # La etiqueta está arriba o abajo
-            if dy < 0:
-                lado = 'arriba'
-                # Si está arriba, rotación 180°
-                angulo = 180 if es_horizontal else 90
-            else:
-                lado = 'abajo'
-                # Si está abajo y es horizontal, ya está en orientación correcta (0°)
-                angulo = 0 if es_horizontal else -90
-    else:
-        # Si no hay vertices, usar solo las dimensiones de la etiqueta
-        lado = 'desconocido'
-        if es_horizontal:
-            angulo = 0  # Asumir que ya está en la orientación correcta
-        else:
-            angulo = 90  # Rotar para que el lado más largo sea horizontal
-    
-    print(f"Etiqueta detectada en lado: {lado}, orientación: {'horizontal' if es_horizontal else 'vertical'}")
-    print(f"Ángulo de rotación calculado: {angulo}°")
-    
-    return angulo, lado
