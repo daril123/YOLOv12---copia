@@ -764,41 +764,23 @@ if __name__ == "__main__":
         
         print("\nModo de procesamiento:")
         print("1. Procesar una imagen")
-        print("2. Procesar un directorio completo")
-        mode = input("Selecciona una opción (1/2): ")
+        print("2. Procesar un directorio completo") 
         
-        if mode == "1":
-            # Procesar una imagen
-            image_path = input("Ruta a la imagen: ")
-            output_dir = input("Directorio de salida (dejar en blanco para usar predeterminado): ")
-            
-            if not output_dir.strip():
-                output_dir = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Clasificacion_por_zonas"
-            
-            success = process_image(image_path, output_dir)
-            if success:
-                print("\nProcesamiento completado exitosamente.")
-                print(f"Resultados guardados en: {os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0])}")
-            else:
-                print("\nHubo errores durante el procesamiento.")
         
-        elif mode == "2":
-            # Procesar un directorio
-            dir_path = input("Ruta al directorio: ")
-            output_dir = input("Directorio de salida (dejar en blanco para usar predeterminado): ")
-            
-            if not output_dir.strip():
-                output_dir = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Clasificacion_por_zonas"
-            
-            success_count = process_directory(dir_path, output_dir)
-            if success_count > 0:
-                print(f"\nProcesamiento de directorio completado.")
-                print(f"Se procesaron correctamente {success_count} imágenes.")
-                print(f"Resultados guardados en: {output_dir}")
-            else:
-                print("\nNo se pudo procesar ninguna imagen del directorio.")
         
+        # Procesar un directorio
+        dir_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\pruebas diagonales"
+        output_dir = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Clasificacion_por_zonas"
+        
+        
+        success_count = process_directory(dir_path, output_dir)
+        if success_count > 0:
+            print(f"\nProcesamiento de directorio completado.")
+            print(f"Se procesaron correctamente {success_count} imágenes.")
+            print(f"Resultados guardados en: {output_dir}")
         else:
-            print("Opción no válida")
+            print("\nNo se pudo procesar ninguna imagen del directorio.")
+        
+        
     else:
         main()
