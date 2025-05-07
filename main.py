@@ -532,6 +532,7 @@ def predict_fn(input_data, models, output_dir=None):
         rotacion_info = {
             'angulo': angulo_rotacion,
             'lado_detectado': lado_detectado,
+            'lado_etiqueta': lado_detectado,  # AÑADIDO: para solucionar el error
             'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
         }
     else:
@@ -539,6 +540,7 @@ def predict_fn(input_data, models, output_dir=None):
         rotacion_info = {
             'angulo': 0,
             'lado_detectado': lado_detectado,
+            'lado_etiqueta': lado_detectado,  # AÑADIDO: para solucionar el error
             'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
         }
     
@@ -628,7 +630,10 @@ def predict_fn(input_data, models, output_dir=None):
     
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
-            processor = models['processors']['defect_type']
+            # Aquí está el bug que necesitamos corregir:
+            # INCORRECTO: processor = models['processors']['defect_type']
+            # CORRECTO:
+            processor = models['processors'][defect_type]  # <- CORRECCIÓN AQUÍ
             results[defect_type] = processor.process(
                 defects, 
                 image, 
