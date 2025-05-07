@@ -30,7 +30,146 @@ from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
 from defects.etiqueta.label_extractor import LabelExtractor,determinar_orientacion_por_zonas
+def generar_mascara_alternativa(image):
+    """
+    Genera una máscara alternativa cuando la detección con el modelo falla
+    utilizando técnicas de procesamiento de imagen tradicionales
+    
+    Args:
+        image: Imagen original
+        
+    Returns:
+        mask: Máscara binaria de la palanquilla
+    """
+    try:
+        # Convertir a escala de grises si es necesario
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Aplicar umbral adaptativo
+        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                      cv2.THRESH_BINARY_INV, 11, 2)
+        
+        # Método de Otsu
+        _, thresh_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Combinar ambos métodos
+        thresh_combined = cv2.bitwise_or(thresh, thresh_otsu)
+        
+        # Operaciones morfológicas para limpiar
+        kernel = np.ones((5, 5), np.uint8)
+        thresh_cleaned = cv2.morphologyEx(thresh_combined, cv2.MORPH_CLOSE, kernel)
+        thresh_cleaned = cv2.morphologyEx(thresh_cleaned, cv2.MORPH_OPEN, kernel)
+        
+        # Encontrar contornos
+        contours, _ = cv2.findContours(thresh_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Seleccionar el contorno de mayor área
+        if contours:
+            max_contour = max(contours, key=cv2.contourArea)
+            
+            # Crear máscara con solo el contorno principal
+            mask = np.zeros_like(thresh_cleaned)
+            cv2.drawContours(mask, [max_contour], 0, 255, -1)
+            
+            return mask
+        else:
+            # Si no hay contornos, usar umbral simple
+            _, simple_mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+            return simple_mask
+            
+    except Exception as e:
+        print(f"Error en generación de máscara alternativa: {e}")
+        # Crear una máscara que cubra toda la imagen
+        h, w = image.shape[:2]
+        return np.ones((h, w), dtype=np.uint8) * 255
 
+def extraer_vertices_de_mascara(mask):
+    """
+    Extrae los vértices de la máscara de forma robusta
+    
+    Args:
+        mask: Máscara binaria de la palanquilla
+        
+    Returns:
+        vertices: Array con las coordenadas de los 4 vértices
+    """
+    try:
+        if mask is None:
+            return None
+            
+        # Encontrar contornos
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return None
+            
+        # Seleccionar el contorno de mayor área
+        max_contour = max(contours, key=cv2.contourArea)
+        
+        # Probar diferentes valores de epsilon para la aproximación
+        for eps_factor in [0.02, 0.01, 0.03, 0.04, 0.05]:
+            # Aproximar el contorno a un polígono
+            perimeter = cv2.arcLength(max_contour, True)
+            epsilon = eps_factor * perimeter
+            approx = cv2.approxPolyDP(max_contour, epsilon, True)
+            
+            # Si obtenemos 4 vértices, usar esta aproximación
+            if len(approx) == 4:
+                vertices = approx.reshape(-1, 2)
+                # Ordenar los vértices: [top-left, top-right, bottom-right, bottom-left]
+                return order_points(vertices)
+        
+        # Si no conseguimos 4 vértices con ningún epsilon, usar rectángulo mínimo
+        return extraer_vertices_rectangulo_minimo(mask)
+        
+    except Exception as e:
+        print(f"Error al extraer vértices de la máscara: {e}")
+        return None
+
+def extraer_vertices_rectangulo_minimo(mask):
+    """
+    Extrae los vértices usando el rectángulo mínimo cuando la aproximación poligonal falla
+    
+    Args:
+        mask: Máscara binaria de la palanquilla
+        
+    Returns:
+        vertices: Array con las coordenadas de los 4 vértices
+    """
+    try:
+        if mask is None:
+            return None
+            
+        # Encontrar contornos
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            # Si no hay contornos, usar los bordes de la imagen
+            h, w = mask.shape[:2]
+            return np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]], dtype=np.int32)
+            
+        # Seleccionar el contorno de mayor área
+        max_contour = max(contours, key=cv2.contourArea)
+        
+        # Usar rectángulo mínimo orientado
+        rect = cv2.minAreaRect(max_contour)
+        box = cv2.boxPoints(rect)
+        box = np.int0(box)
+        
+        # Ordenar los vértices
+        return order_points(box)
+        
+    except Exception as e:
+        print(f"Error al extraer vértices con rectángulo mínimo: {e}")
+        # Si falla, usar los bordes de la imagen
+        h, w = mask.shape[:2]
+        return np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]], dtype=np.int32)
+    
+
+    
 def model_fn(model_dir=None):
     """
     Carga los modelos necesarios para la detección de vértices y defectos
@@ -153,6 +292,7 @@ def predict_fn(input_data, models, output_dir=None):
         Dictionary con los resultados del análisis
     """
     # Extraer los datos necesarios
+    original_image = input_data['image'].copy()
     image = input_data['image']
     image_path = input_data['path']
     image_name = input_data['name']
@@ -164,7 +304,6 @@ def predict_fn(input_data, models, output_dir=None):
     # Verificar que el extractor de etiquetas esté disponible
     if 'etiqueta' not in models['processors']:
         print("Warning: Label extractor not initialized. Label orientation features will be disabled.")
-        # Create a backup label extractor
         models['processors']['etiqueta'] = LabelExtractor()
     
     # 1. Pre-procesamiento de la imagen (opcional)
@@ -177,42 +316,154 @@ def predict_fn(input_data, models, output_dir=None):
         print(f"Redimensionando imagen de {w}x{h} a {new_w}x{new_h}")
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
     
-    # NUEVA PARTE: Detectar etiquetas primero para orientación
-    print("Detectando etiquetas para orientación...")
-    # Detectar etiquetas con el vertex_detector
-    etiqueta_detections = []
-
+    # 2. MEJORA: Obtener una máscara robusta de la palanquilla
+    print(f"Generando máscara robusta de la palanquilla...")
     try:
-        # Obtener resultados del vertex detector para la imagen actual
+        # Primero obtenemos resultados usando el modelo de detección
+        vertex_result = vertex_detector.model.predict(
+            image, 
+            conf=vertex_detector.conf_threshold,
+            device=vertex_detector.device
+        )[0]
+        
+        # Verificar si hay máscaras en el resultado
+        if hasattr(vertex_result, 'masks') and vertex_result.masks is not None:
+            # Buscar la clase "palanquilla" para identificar la máscara correcta
+            palanquilla_mask = None
+            palanquilla_class_id = None
+            
+            # Encontrar el ID de la clase "palanquilla"
+            if hasattr(vertex_detector.model, "names"):
+                class_names = vertex_detector.model.names
+                for id, name in class_names.items():
+                    if isinstance(name, str) and (name.lower() == "palanquilla" or name.lower() == "class_1"):
+                        palanquilla_class_id = id
+                        print(f"ID de clase para 'palanquilla' encontrado: {palanquilla_class_id}")
+                        break
+            
+            # Si encontramos el ID de clase, buscar la máscara correspondiente
+            if palanquilla_class_id is not None:
+                # Extraer las clases y confianzas
+                boxes = vertex_result.boxes
+                masks = vertex_result.masks
+                
+                # Buscar la máscara con mayor área para la clase palanquilla
+                max_area = 0
+                for i, box in enumerate(boxes):
+                    cls_id = int(box.cls[0].item())
+                    if cls_id == palanquilla_class_id:
+                        # Obtener la máscara para esta detección
+                        mask_data = masks[i].data.cpu().numpy()
+                        mask = (mask_data > 0.5).astype(np.uint8) * 255
+                        
+                        # Asegurarse de que sea 2D
+                        if len(mask.shape) > 2:
+                            mask = mask[0]
+                            
+                        # Calcular el área
+                        area = np.count_nonzero(mask)
+                        
+                        # Actualizar si es la mayor
+                        if area > max_area:
+                            max_area = area
+                            palanquilla_mask = mask
+                            
+                # Si no encontramos ninguna máscara, usar método alternativo
+                if palanquilla_mask is None:
+                    print("No se encontró máscara para la clase palanquilla")
+                    palanquilla_mask = generar_mascara_alternativa(image)
+            else:
+                # Si no encontramos ID de clase, usar método alternativo
+                print("No se encontró ID de clase para palanquilla")
+                palanquilla_mask = generar_mascara_alternativa(image)
+        else:
+            # Si no hay máscaras, usar método alternativo
+            print("No hay máscaras disponibles en el resultado")
+            palanquilla_mask = generar_mascara_alternativa(image)
+            
+        # Verificar que la máscara tenga el tamaño correcto
+        if palanquilla_mask is not None and palanquilla_mask.shape != (image.shape[0], image.shape[1]):
+            print(f"Redimensionando máscara de {palanquilla_mask.shape} a {image.shape[:2]}")
+            palanquilla_mask = cv2.resize(palanquilla_mask, (image.shape[1], image.shape[0]), 
+                                         interpolation=cv2.INTER_NEAREST)
+            
+        # Aplicar operaciones morfológicas para limpiar la máscara
+        if palanquilla_mask is not None:
+            kernel = np.ones((5, 5), np.uint8)
+            palanquilla_mask = cv2.morphologyEx(palanquilla_mask, cv2.MORPH_CLOSE, kernel)
+            palanquilla_mask = cv2.morphologyEx(palanquilla_mask, cv2.MORPH_OPEN, kernel)
+            
+    except Exception as e:
+        print(f"Error al generar máscara robusta: {e}")
+        import traceback
+        traceback.print_exc()
+        # Crear una máscara por defecto
+        palanquilla_mask = generar_mascara_alternativa(image)
+    
+    # 3. MEJORA: Extraer vértices directamente de la máscara
+    print("Extrayendo vértices de la máscara...")
+    vertices = extraer_vertices_de_mascara(palanquilla_mask)
+    
+    # Verificar que tengamos 4 vértices válidos
+    if vertices is None or len(vertices) != 4:
+        print("Error: No se pudieron extraer 4 vértices de la máscara. Usando método alternativo.")
+        vertices = extraer_vertices_rectangulo_minimo(palanquilla_mask)
+    
+    # Verificar y corregir vértices si es necesario
+    h, w = image.shape[:2]
+    
+    # Corrección de vértices fuera de los límites
+    for i in range(len(vertices)):
+        vertices[i][0] = max(0, min(w-1, vertices[i][0]))
+        vertices[i][1] = max(0, min(h-1, vertices[i][1]))
+    
+    # 4. Guardar visualización de diagnóstico
+    if output_dir:
+        debug_dir = os.path.join(output_dir, image_name)
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Visualizar máscara original
+        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_original.jpg"), palanquilla_mask)
+        
+        # Visualizar vértices sobre la imagen original
+        debug_img = image.copy()
+        cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
+        for i, vertex in enumerate(vertices):
+            cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
+            cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_original.jpg"), debug_img)
+    
+    # 5. Generar máscaras de zona con los vértices detectados
+    print(f"Generando máscaras de zonas")
+    zones_img, zone_masks = visualize_zones(image, vertices)
+    
+    # 6. Detectar etiquetas para determinar orientación
+    print("Detectando etiquetas para orientación...")
+    etiqueta_detections = []
+    try:
         vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
         
-        # Buscar la clase "etiqueta" en los resultados del vertex detector
         if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
             class_names = vertex_detector.model.names
             etiqueta_class_id = None
             
-            # Mostrar todas las clases disponibles y sus IDs para diagnóstico
             print(f"Clases disponibles en el modelo de vértices: {class_names}")
             
-            # Encontrar el ID de clase para "etiqueta"
             for id, name in class_names.items():
                 if isinstance(name, str) and name.lower() == "etiqueta":
                     etiqueta_class_id = id
                     print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
                     break
             
-            # Si no encontramos "etiqueta", buscar "class_0" que podría ser la etiqueta
             if etiqueta_class_id is None and 0 in class_names:
                 etiqueta_class_id = 0
                 print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
             
             if etiqueta_class_id is not None:
-                # Procesar todas las cajas y encontrar las de clase "etiqueta"
                 boxes = vertex_result.boxes
                 for i, box in enumerate(boxes):
                     cls_id = int(box.cls[0].item())
                     if cls_id == etiqueta_class_id:
-                        # Esto es una etiqueta
                         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                         conf = float(box.conf[0].item())
                         
@@ -226,55 +477,58 @@ def predict_fn(input_data, models, output_dir=None):
                         })
     except Exception as e:
         print(f"Error al buscar etiquetas: {e}")
-        import traceback    
+        import traceback
         traceback.print_exc()
-
-    # Hacer una detección inicial rápida de vértices para tener referencia de la palanquilla
-    initial_vertices = None
-    try:
-        # Importante: Usar esta forma de importación directamente aquí, no referenciar la función
-        # directamente que es lo que causa el error
-        from utils.contorno import obtener_contorno_imagen
-        
-        initial_vertices, _, _ = obtener_contorno_imagen(
-            image, vertex_detector.model, vertex_detector.conf_threshold, 
-            target_class=vertex_detector.target_class)
-    except Exception as e:
-        print(f"Error en detección inicial de vértices: {e}")
     
-    # Si se detectaron etiquetas o tenemos zonas, determinar la orientación
-    rotated_image = image.copy()  # Por defecto, usar la imagen original
-
-    # Generar máscaras de zona temprano para tenerlas disponibles
-    if initial_vertices is not None:
-        temp_zones_img, temp_zone_masks = visualize_zones(image, initial_vertices)
-    else:
-        # Si no tenemos vértices, crear máscaras vacías
-        h, w = image.shape[:2]
-        temp_zone_masks = {
-            'rojo': np.zeros((h, w), dtype=np.uint8),
-            'amarillo': np.zeros((h, w), dtype=np.uint8),
-            'verde': np.zeros((h, w), dtype=np.uint8),
-            'morado': np.zeros((h, w), dtype=np.uint8)
-        }
-
-    # Determinar orientación con nuestra nueva función
-    # que tiene en cuenta tanto etiquetas como zonas
+    # 7. Determinar orientación basada en etiquetas y zonas
     angulo_rotacion, lado_detectado = determinar_orientacion_por_zonas(
-        temp_zone_masks, 
+        zone_masks, 
         etiqueta_detections[0] if etiqueta_detections else None,
-        initial_vertices
+        vertices
     )
-
-    # Rotar la imagen si es necesario
+    
+    # 8. Rotar la imagen y toda la información si es necesario
+    rotated_image = image.copy()
+    rotated_vertices = vertices.copy()
+    rotated_mask = palanquilla_mask.copy() if palanquilla_mask is not None else None
+    rotated_zone_masks = {zona: mask.copy() for zona, mask in zone_masks.items()}
+    
     if angulo_rotacion != 0:
-        print(f"Rotando imagen {angulo_rotacion}° basado en {lado_detectado}...")
+        print(f"Rotando imagen y datos {angulo_rotacion}° basado en {lado_detectado}...")
         h, w = image.shape[:2]
         center = (w // 2, h // 2)
         rotation_matrix = cv2.getRotationMatrix2D(center, angulo_rotacion, 1.0)
+        
+        # Rotar la imagen
         rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
         
-        # Guardar información sobre la rotación para el resultado final
+        # Rotar los vértices
+        vertices_homog = np.ones((len(vertices), 3))
+        vertices_homog[:, :2] = vertices
+        
+        rotated_vertices = np.zeros((len(vertices), 2), dtype=np.int32)
+        for i, vertex in enumerate(vertices_homog):
+            x = rotation_matrix[0, 0] * vertex[0] + rotation_matrix[0, 1] * vertex[1] + rotation_matrix[0, 2]
+            y = rotation_matrix[1, 0] * vertex[0] + rotation_matrix[1, 1] * vertex[1] + rotation_matrix[1, 2]
+            rotated_vertices[i] = [int(x), int(y)]
+        
+        # Rotar la máscara de la palanquilla
+        if rotated_mask is not None:
+            rotated_mask = cv2.warpAffine(rotated_mask, rotation_matrix, (w, h), 
+                                          flags=cv2.INTER_NEAREST, 
+                                          borderMode=cv2.BORDER_CONSTANT, 
+                                          borderValue=0)
+        
+        # Rotar las máscaras de zonas
+        for zona, mask in zone_masks.items():
+            rotated_zone_masks[zona] = cv2.warpAffine(mask, rotation_matrix, (w, h), 
+                                                    flags=cv2.INTER_NEAREST, 
+                                                    borderMode=cv2.BORDER_CONSTANT, 
+                                                    borderValue=0)
+        
+        # Regenerar las zonas con los vértices rotados para garantizar coherencia
+        zones_img, rotated_zone_masks = visualize_zones(rotated_image, rotated_vertices)
+        
         rotacion_info = {
             'angulo': angulo_rotacion,
             'lado_detectado': lado_detectado,
@@ -288,83 +542,41 @@ def predict_fn(input_data, models, output_dir=None):
             'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
         }
     
-    
-    # Usar la imagen rotada para el resto del procesamiento
+    # Usar los datos rotados para el resto del procesamiento
     image = rotated_image
+    vertices = rotated_vertices
+    palanquilla_mask = rotated_mask
+    zone_masks = rotated_zone_masks
     
-    # 2. Detectar vértices de la palanquilla (con la imagen ya rotada)
-    print(f"Detectando vértices en imagen rotada: {image_path}")
-    try:
-        # Usar la función mejorada directamente desde utils.contorno
-        # ahora pasando la clase objetivo desde el detector de vértices
-        from utils.contorno import obtener_contorno_imagen
-        vertices, contorno_principal, palanquilla_mask = obtener_contorno_imagen(
-            image, vertex_detector.model, vertex_detector.conf_threshold, 
-            target_class=vertex_detector.target_class)
+    # Guardar visualización de los vértices rotados y máscara para debug
+    if output_dir:
+        # Visualizar máscara rotada
+        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_rotada.jpg"), palanquilla_mask)
         
-        success = vertices is not None and len(vertices) == 4
-        
-        if not success:
-            print("Error: No se pudieron detectar los vértices correctamente. Usando método alternativo.")
-            # Usar método alternativo del detector de vértices
-            vertices, success, palanquilla_mask = vertex_detector.detect_vertices_alternative(image)
-            
-            if not success or vertices is None:
-                print("Error: También falló el método alternativo. Usando toda la imagen.")
-                # Si todo falla, asegurar que palanquilla_mask sea None (será creado más tarde según los vértices)
-                h, w = image.shape[:2]
-                vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-                # Crear una máscara que cubra toda la imagen
-                palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
-    except Exception as e:
-        print(f"Error al detectar vértices: {e}")
-        import traceback
-        traceback.print_exc()
-        h, w = image.shape[:2]
-        vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-        # Crear una máscara que cubra toda la imagen
-        palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
-        success = False
-
-    # 3. Verificar y corregir vértices si es necesario
-    # Asegurar que los vértices están dentro de los límites de la imagen
-    h, w = image.shape[:2]
+        # Visualizar vértices sobre la imagen rotada
+        debug_img = image.copy()
+        cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
+        for i, vertex in enumerate(vertices):
+            cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
+            cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_rotados.jpg"), debug_img)
     
-    # Corrección de vértices fuera de los límites
-    for i in range(len(vertices)):
-        vertices[i][0] = max(0, min(w-1, vertices[i][0]))
-        vertices[i][1] = max(0, min(h-1, vertices[i][1]))
-    
-    # Verificar que el área del cuadrilátero sea razonable
-    contorno_np = vertices.reshape(-1, 1, 2)
-    area = cv2.contourArea(contorno_np)
-    
-    if area < 10000 or area > 0.95 * w * h:  # Muy pequeño o casi toda la imagen
-        print(f"Advertencia: Área del cuadrilátero anormal ({area} píxeles). Ajustando a toda la imagen.")
-        vertices = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
-        contorno_np = vertices.reshape(-1, 1, 2)
-        # Recrear la máscara
-        palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
-
-    # 5. Generar máscaras de zona con los vértices detectados
-    print(f"Generando máscaras de zonas")
-    zones_img, zone_masks = visualize_zones(image, vertices)
-    
-    # 6. Detectar defectos con el detector de defectos
+    # 9. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
     
     if not detections:
         print("No se detectaron defectos en esta imagen.")
     
-    # 7. Crear mapeo de clases basado en los nombres de clase del modelo de defectos
+    # 10. Resto del procesamiento...
+    # [código para mapeo de clases, clasificación de defectos, etc.]
+    
+    # Código para el mapeo de clases
     class_mapping = {}
     if defect_detector.class_names:
         print("Creando mapeo de clases basado en modelo de defectos:")
-        # Mostrar los nombres de clase disponibles
         print(f"Clases en el modelo: {defect_detector.class_names}")
         
-        # Mapear clases del modelo a las categorías esperadas en el código
         for idx, name in enumerate(defect_detector.class_names):
             name_lower = name.lower()
             if 'grieta' in name_lower:
@@ -383,27 +595,24 @@ def predict_fn(input_data, models, output_dir=None):
                 class_mapping[name] = 'estrella'
                 print(f"  - '{name}' mapeado a 'estrella'")
             else:
-                # Si no hay coincidencia, usar el nombre original
                 class_mapping[name] = name
                 print(f"  - '{name}' mantenido como '{name}'")
     
-    # 8. Clasificar los defectos según su posición en las zonas
+    # Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
     
-    # 9. Analizar abombamiento (siempre se ejecuta, no depende de detecciones)
-    # Para el abombamiento usar el modelo de vértices/máscara de palanquilla, NO el de defectos
+    # Procesar abombamiento y romboidad
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
         image,
         vertices,
         image_name=image_name,
         output_dir=output_dir,
-        model=vertex_detector.model,  # Usando el modelo de vértices/máscara
-        conf_threshold=0.35,  # Valor reducido para mejorar detección
+        model=vertex_detector.model,
+        conf_threshold=0.35,
         mask=palanquilla_mask
     )
     
-    # 10. Analizar romboidad (siempre se ejecuta, no depende de detecciones)
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,
@@ -412,15 +621,14 @@ def predict_fn(input_data, models, output_dir=None):
         output_dir=output_dir
     )
     
-    # Procesar cada tipo de defecto con su procesador específico
-    results = {}  # Inicializar el diccionario de resultados
+    # Procesar cada tipo de defecto
+    results = {}
     results['abombamiento'] = abombamiento_results
     results['romboidad'] = romboidad_results
     
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
-            processor = models['processors'][defect_type]
-            # Pasar el nombre de la imagen y el directorio de salida
+            processor = models['processors']['defect_type']
             results[defect_type] = processor.process(
                 defects, 
                 image, 
@@ -430,7 +638,7 @@ def predict_fn(input_data, models, output_dir=None):
                 output_dir=output_dir
             )
     
-    # Si se detectaron etiquetas, procesarlas con OCR
+    # Procesar etiquetas si se detectaron
     if etiqueta_detections and 'etiqueta' in models['processors']:
         print(f"Procesando {len(etiqueta_detections)} etiqueta(s) con OCR...")
         label_extractor = models['processors']['etiqueta']
@@ -443,7 +651,6 @@ def predict_fn(input_data, models, output_dir=None):
             output_dir=output_dir
         )
         
-        # Añadir los resultados de las etiquetas a los resultados
         results['etiqueta'] = label_results
     else:
         print("No se detectaron etiquetas en la imagen o no está disponible el procesador de etiquetas.")
@@ -459,7 +666,8 @@ def predict_fn(input_data, models, output_dir=None):
         'processed_results': results,
         'palanquilla_mask': palanquilla_mask,
         'image_procesada': image,
-        'rotacion_info': rotacion_info  # Nueva clave con información de rotación
+        'rotacion_info': rotacion_info,
+        'original_image': original_image
     }
 
 def output_fn(prediction_results, output_dir, input_data):
