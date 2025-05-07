@@ -248,3 +248,74 @@ class LabelExtractor:
             'visualizations': visualizations,
             'report_paths': report_paths
         }
+def determinar_orientacion_etiqueta(etiqueta_detection, image, corners):
+    """
+    Determina la orientación de la imagen basada en la ubicación y
+    dimensiones de la etiqueta detectada.
+    
+    Args:
+        etiqueta_detection: Información sobre la etiqueta detectada
+        image: Imagen original
+        corners: Esquinas de la palanquilla
+        
+    Returns:
+        angulo_rotacion: Ángulo de rotación para que la etiqueta quede en la parte inferior
+        lado_etiqueta: Posición de la etiqueta ('arriba', 'derecha', 'abajo', 'izquierda')
+    """
+    # Extraer coordenadas de la caja contenedora de la etiqueta
+    x1, y1, x2, y2 = etiqueta_detection['bbox']
+    
+    # Calcular el centro de la etiqueta
+    centro_x = (x1 + x2) // 2
+    centro_y = (y1 + y2) // 2
+    
+    # Calcular dimensiones de la etiqueta
+    ancho_etiqueta = x2 - x1
+    alto_etiqueta = y2 - y1
+    
+    # Determinar si la etiqueta tiene orientación horizontal (ancho > alto)
+    es_horizontal = ancho_etiqueta > alto_etiqueta
+    
+    # Determinar el lado donde está la etiqueta respecto al centro de la palanquilla
+    if corners is not None and len(corners) == 4:
+        # Calcular centro de la palanquilla
+        centro_palanquilla_x = sum(corner[0] for corner in corners) / 4
+        centro_palanquilla_y = sum(corner[1] for corner in corners) / 4
+        
+        # Calcular distancias relativas
+        dx = centro_x - centro_palanquilla_x
+        dy = centro_y - centro_palanquilla_y
+        
+        # Determinar el lado predominante
+        if abs(dx) > abs(dy):
+            # La etiqueta está a la izquierda o derecha
+            if dx < 0:
+                lado = 'izquierda'
+                # CORRECCIÓN: Siempre rotar 90° si está a la izquierda, independientemente de la orientación
+                angulo = 90
+            else:
+                lado = 'derecha'
+                # Si está a la derecha, rotar -90° si horizontal, 180° si vertical
+                angulo = -90 if es_horizontal else 180
+        else:
+            # La etiqueta está arriba o abajo
+            if dy < 0:
+                lado = 'arriba'
+                # Si está arriba, rotación 180°
+                angulo = 180 if es_horizontal else 90
+            else:
+                lado = 'abajo'
+                # Si está abajo y es horizontal, ya está en orientación correcta (0°)
+                angulo = 0 if es_horizontal else -90
+    else:
+        # Si no hay vertices, usar solo las dimensiones de la etiqueta
+        lado = 'desconocido'
+        if es_horizontal:
+            angulo = 0  # Asumir que ya está en la orientación correcta
+        else:
+            angulo = 90  # Rotar para que el lado más largo sea horizontal
+    
+    print(f"Etiqueta detectada en lado: {lado}, orientación: {'horizontal' if es_horizontal else 'vertical'}")
+    print(f"Ángulo de rotación calculado: {angulo}°")
+    
+    return angulo, lado

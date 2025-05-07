@@ -29,7 +29,7 @@ from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
-from defects.etiqueta.label_extractor import LabelExtractor  # Nueva importación para etiquetas
+from defects.etiqueta.label_extractor import LabelExtractor,determinar_orientacion_etiqueta  # Nueva importación para etiquetas
 
 def model_fn(model_dir=None):
     """
@@ -158,9 +158,113 @@ def predict_fn(input_data, models, output_dir=None):
         new_h, new_w = int(h * scale_factor), int(w * scale_factor)
         print(f"Redimensionando imagen de {w}x{h} a {new_w}x{new_h}")
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # 2. Detectar vértices de la palanquilla
-    print(f"Detectando vértices en: {image_path}")
+    
+    # NUEVA PARTE: Detectar etiquetas primero para orientación
+    print("Detectando etiquetas para orientación...")
+    # Detectar etiquetas con el vertex_detector
+    etiqueta_detections = []
+    
+    try:
+        # Obtener resultados del vertex detector para la imagen actual
+        vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
+        
+        # Buscar la clase "etiqueta" en los resultados del vertex detector
+        if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
+            class_names = vertex_detector.model.names
+            etiqueta_class_id = None
+            
+            # Mostrar todas las clases disponibles y sus IDs para diagnóstico
+            print(f"Clases disponibles en el modelo de vértices: {class_names}")
+            
+            # Encontrar el ID de clase para "etiqueta"
+            for id, name in class_names.items():
+                if isinstance(name, str) and name.lower() == "etiqueta":
+                    etiqueta_class_id = id
+                    print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
+                    break
+            
+            # Si no encontramos "etiqueta", buscar "class_0" que podría ser la etiqueta
+            if etiqueta_class_id is None and 0 in class_names:
+                etiqueta_class_id = 0
+                print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
+            
+            if etiqueta_class_id is not None:
+                # Procesar todas las cajas y encontrar las de clase "etiqueta"
+                boxes = vertex_result.boxes
+                for i, box in enumerate(boxes):
+                    cls_id = int(box.cls[0].item())
+                    if cls_id == etiqueta_class_id:
+                        # Esto es una etiqueta
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                        conf = float(box.conf[0].item())
+                        
+                        print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
+                        
+                        etiqueta_detections.append({
+                            'bbox': (x1, y1, x2, y2),
+                            'conf': conf,
+                            'class': 'etiqueta',
+                            'cls_id': cls_id
+                        })
+    except Exception as e:
+        print(f"Error al buscar etiquetas: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Hacer una detección inicial rápida de vértices para tener referencia de la palanquilla
+    initial_vertices = None
+    try:
+        initial_vertices, _, _ = obtener_contorno_imagen(
+            image, vertex_detector.model, vertex_detector.conf_threshold, 
+            target_class=vertex_detector.target_class)
+    except Exception as e:
+        print(f"Error en detección inicial de vértices: {e}")
+    
+    # Si se detectaron etiquetas, alinear la imagen según la orientación de la etiqueta
+    rotated_image = image.copy()  # Por defecto, usar la imagen original
+    if etiqueta_detections:
+        # Ordenar etiquetas por confianza descendente
+        etiqueta_detections.sort(key=lambda x: x['conf'], reverse=True)
+        mejor_etiqueta = etiqueta_detections[0]  # Usar la etiqueta de mayor confianza
+        
+        # Determinar ángulo de rotación basado en la etiqueta
+        angulo_rotacion, lado_etiqueta = determinar_orientacion_etiqueta(
+            mejor_etiqueta, image, initial_vertices)
+        
+        # Rotar la imagen
+        if angulo_rotacion != 0:
+            print(f"Rotando imagen {angulo_rotacion}° para alinear etiqueta...")
+            h, w = image.shape[:2]
+            center = (w // 2, h // 2)
+            rotation_matrix = cv2.getRotationMatrix2D(center, angulo_rotacion, 1.0)
+            rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
+            
+            # Guardar información sobre la rotación para el resultado final
+            rotacion_info = {
+                'angulo': angulo_rotacion,
+                'lado_etiqueta': lado_etiqueta,
+                'etiqueta_bbox': mejor_etiqueta['bbox']
+            }
+        else:
+            print("No es necesario rotar la imagen, etiqueta ya está en posición correcta.")
+            rotacion_info = {
+                'angulo': 0,
+                'lado_etiqueta': lado_etiqueta,
+                'etiqueta_bbox': mejor_etiqueta['bbox']
+            }
+    else:
+        print("No se detectaron etiquetas para orientar la imagen.")
+        rotacion_info = {
+            'angulo': 0,
+            'lado_etiqueta': 'no_detectada',
+            'etiqueta_bbox': None
+        }
+    
+    # Usar la imagen rotada para el resto del procesamiento
+    image = rotated_image
+    
+    # 2. Detectar vértices de la palanquilla (con la imagen ya rotada)
+    print(f"Detectando vértices en imagen rotada: {image_path}")
     try:
         # Usar la función mejorada directamente desde utils.contorno
         # ahora pasando la clase objetivo desde el detector de vértices
@@ -213,113 +317,10 @@ def predict_fn(input_data, models, output_dir=None):
         # Recrear la máscara
         palanquilla_mask = np.ones((h, w), dtype=np.uint8) * 255
 
-    # 4. Rotar imagen para alinear con el lado más recto
-    print(f"Rotando imagen para alinear palanquilla")
-    try:
-        # Determinar lado más recto para rotación
-        if success:
-            try:
-                # Importar módulo de abombamiento para determinar el lado más recto
-                from defects.abombamiento.abombamiento import obtener_lado_rotacion_abombamiento
-                lado_recto = obtener_lado_rotacion_abombamiento(vertices, contorno_np)
-                
-                # Rotar la imagen
-                from utils.contorno import rotar_imagen_lado
-                image_rotada = rotar_imagen_lado(image, lado_recto, vertices)
-                
-                # Actualizar la imagen y detectar los nuevos vértices
-                image = image_rotada
-                vertices_aux, contorno_aux, palanquilla_mask_aux = obtener_contorno_imagen(
-                    image, vertex_detector.model, vertex_detector.conf_threshold, 
-                    target_class=vertex_detector.target_class)
-                
-                if vertices_aux is not None and len(vertices_aux) == 4:
-                    vertices = vertices_aux
-                    contorno_np = contorno_aux
-                    palanquilla_mask = palanquilla_mask_aux
-                else:
-                    print("No se pudieron detectar los vértices después de la rotación. Manteniendo los vértices originales.")
-            except Exception as inner_e:
-                print(f"Error al determinar lado de rotación: {inner_e}")
-        else:
-            print("No se pudo rotar la imagen: vértices no disponibles.")
-    except Exception as e:
-        print(f"Error al rotar la imagen: {e}")
-        import traceback
-        traceback.print_exc()
-    
     # 5. Generar máscaras de zona con los vértices detectados
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
-    etiqueta_detections = []
-
-    # Obtener resultados del vertex detector para la imagen actual
-    try:
-        vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
-        
-        # Buscar la clase "etiqueta" en los resultados del vertex detector
-        if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
-            class_names = vertex_detector.model.names
-            etiqueta_class_id = None
-            
-            # Mostrar todas las clases disponibles y sus IDs para diagnóstico
-            print(f"Clases disponibles en el modelo de vértices: {class_names}")
-            
-            # Encontrar el ID de clase para "etiqueta"
-            for id, name in class_names.items():
-                if isinstance(name, str) and name.lower() == "etiqueta":
-                    etiqueta_class_id = id
-                    print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
-                    break
-            
-            # Si no encontramos "etiqueta", buscar "class_0" que podría ser la etiqueta
-            if etiqueta_class_id is None and 0 in class_names:
-                etiqueta_class_id = 0
-                print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
-            
-            if etiqueta_class_id is not None:
-                # Procesar todas las cajas y encontrar las de clase "etiqueta"
-                boxes = vertex_result.boxes
-                for i, box in enumerate(boxes):
-                    cls_id = int(box.cls[0].item())
-                    if cls_id == etiqueta_class_id:
-                        # Esto es una etiqueta
-                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                        conf = float(box.conf[0].item())
-                        
-                        print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
-                        
-                        etiqueta_detections.append({
-                            'bbox': (x1, y1, x2, y2),
-                            'conf': conf,
-                            'class': 'etiqueta',
-                            'cls_id': cls_id
-                        })
-    except Exception as e:
-        print(f"Error al buscar etiquetas: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # Si encontramos alguna etiqueta, procesarlas con OCR
-    results = {}  # Inicializar aquí antes de usarlo
-
-    if etiqueta_detections and 'etiqueta' in models['processors']:
-        print(f"Procesando {len(etiqueta_detections)} etiqueta(s) con OCR...")
-        label_extractor = models['processors']['etiqueta']
-        label_results = label_extractor.process(
-            etiqueta_detections,
-            image,
-            corners=vertices,
-            zone_masks=zone_masks,
-            image_name=image_name,
-            output_dir=output_dir
-        )
-        
-        # Añadir los resultados de las etiquetas a los resultados
-        results['etiqueta'] = label_results
-    else:
-        print("No se detectaron etiquetas en la imagen o no está disponible el procesador de etiquetas.")
     # 6. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
@@ -383,6 +384,7 @@ def predict_fn(input_data, models, output_dir=None):
     )
     
     # Procesar cada tipo de defecto con su procesador específico
+    results = {}  # Inicializar el diccionario de resultados
     results['abombamiento'] = abombamiento_results
     results['romboidad'] = romboidad_results
     
@@ -399,17 +401,36 @@ def predict_fn(input_data, models, output_dir=None):
                 output_dir=output_dir
             )
     
+    # Si se detectaron etiquetas, procesarlas con OCR
+    if etiqueta_detections and 'etiqueta' in models['processors']:
+        print(f"Procesando {len(etiqueta_detections)} etiqueta(s) con OCR...")
+        label_extractor = models['processors']['etiqueta']
+        label_results = label_extractor.process(
+            etiqueta_detections,
+            image,
+            corners=vertices,
+            zone_masks=zone_masks,
+            image_name=image_name,
+            output_dir=output_dir
+        )
+        
+        # Añadir los resultados de las etiquetas a los resultados
+        results['etiqueta'] = label_results
+    else:
+        print("No se detectaron etiquetas en la imagen o no está disponible el procesador de etiquetas.")
+    
     return {
         'vertices': vertices,
         'zones_img': zones_img,
         'zone_masks': zone_masks,
         'detections': detections,
-        'etiqueta_detections': etiqueta_detections,  # Añadir las detecciones de etiquetas
+        'etiqueta_detections': etiqueta_detections,
         'yolo_result': yolo_result,
         'classified_detections': classified_detections,
         'processed_results': results,
         'palanquilla_mask': palanquilla_mask,
-        'image_procesada': image
+        'image_procesada': image,
+        'rotacion_info': rotacion_info  # Nueva clave con información de rotación
     }
 
 def output_fn(prediction_results, output_dir, input_data):
@@ -476,6 +497,25 @@ def output_fn(prediction_results, output_dir, input_data):
     cv2.imwrite(result_path, result_image)
     output_paths['result_img'] = result_path
     
+    # Guardar información de rotación si existe
+    if 'rotacion_info' in prediction_results:
+        rotacion_info = prediction_results['rotacion_info']
+        rotacion_path = os.path.join(image_output_dir, f"{name}_rotacion_info.txt")
+        
+        with open(rotacion_path, 'w', encoding='utf-8') as f:
+            f.write(f"INFORMACIÓN DE ROTACIÓN - {name}\n")
+            f.write("="*50 + "\n\n")
+            f.write(f"Ángulo de rotación: {rotacion_info['angulo']}°\n")
+            f.write(f"Lado de la etiqueta: {rotacion_info['lado_etiqueta']}\n")
+            
+            if rotacion_info['etiqueta_bbox']:
+                x1, y1, x2, y2 = rotacion_info['etiqueta_bbox']
+                f.write(f"Bounding box de etiqueta: ({x1}, {y1}, {x2}, {y2})\n")
+                f.write(f"Ancho etiqueta: {x2-x1} píxeles\n")
+                f.write(f"Alto etiqueta: {y2-y1} píxeles\n")
+        
+        output_paths['rotacion_info'] = rotacion_path
+    
     # Guardar los resultados de cada tipo de defecto
     classified_detections = prediction_results['classified_detections']
     
@@ -532,21 +572,19 @@ def output_fn(prediction_results, output_dir, input_data):
                     
                     output_paths[property_type]['visualizations'][viz_name] = viz_path
     
-    # Save etiqueta results specifically
-            
-    # Save etiqueta results specifically
+    # Guardar resultados de etiquetas específicamente
     if 'etiqueta' in prediction_results['processed_results']:
         etiqueta_results = prediction_results['processed_results']['etiqueta']
         
-        # Create etiqueta directory
+        # Crear directorio para etiquetas
         etiqueta_dir = os.path.join(image_output_dir, "etiqueta")
         os.makedirs(etiqueta_dir, exist_ok=True)
         
-        # Save report paths
+        # Guardar rutas de reportes
         if 'report_paths' in etiqueta_results:
             output_paths['etiqueta_reports'] = etiqueta_results['report_paths']
         
-        # Save visualizations
+        # Guardar visualizaciones
         if 'visualizations' in etiqueta_results:
             if 'etiqueta' not in output_paths:
                 output_paths['etiqueta'] = {}
