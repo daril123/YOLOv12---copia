@@ -64,12 +64,12 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
             print(f"Error al procesar contorno principal: {e}")
             contorno_pts = np.array([])
         
-        # Definir vectores de dirección esperados para cada lado
-        direcciones_esperadas = {
-            "Lado 1 (Top)": np.array([0, -1]),     # Hacia arriba
-            "Lado 2 (Right)": np.array([1, 0]),    # Hacia la derecha
-            "Lado 3 (Bottom)": np.array([0, 1]),   # Hacia abajo
-            "Lado 4 (Left)": np.array([-1, 0])     # Hacia la izquierda
+        # Definir vectores de dirección correctos para cada lado (hacia adentro)
+        direcciones_correctas = {
+            "Lado 1 (Top)": np.array([0, 1]),      # Hacia abajo (interior)
+            "Lado 2 (Right)": np.array([-1, 0]),   # Hacia la izquierda (interior)
+            "Lado 3 (Bottom)": np.array([0, -1]),  # Hacia arriba (interior)
+            "Lado 4 (Left)": np.array([1, 0])      # Hacia la derecha (interior)
         }
         
         # Guardar los resultados de cada lado
@@ -100,17 +100,16 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
             etiqueta_D = f"D{indice}={D:.1f}px"
             
             # Colocar etiqueta D cerca del punto medio del lado
-            # Determinar posición relativa según el lado
+            pos_D = (mid_x, mid_y)
+            # Determinar ajuste de posición según el lado
             if nombre_lado == "Lado 1 (Top)":
-                offset_D = (0, -20)  # Arriba
+                pos_D = (mid_x, mid_y - 20)  # Arriba
             elif nombre_lado == "Lado 2 (Right)":
-                offset_D = (20, 0)   # Derecha
+                pos_D = (mid_x + 20, mid_y)   # Derecha
             elif nombre_lado == "Lado 3 (Bottom)":
-                offset_D = (0, 20)   # Abajo
+                pos_D = (mid_x, mid_y + 20)   # Abajo
             else:  # Lado 4 (Left)
-                offset_D = (-20, 0)  # Izquierda
-                
-            pos_D = (mid_x + offset_D[0], mid_y + offset_D[1])
+                pos_D = (mid_x - 20, mid_y)   # Izquierda
             
             # Agregar fondo negro para mejor visibilidad
             (text_width, text_height), _ = cv2.getTextSize(etiqueta_D, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
@@ -131,27 +130,16 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                 # Vector unitario del lado
                 lado_unit = lado_vec / lado_len
                 
-                # CORRECCIÓN: Asegurar que el vector perpendicular apunta en la dirección correcta
-                # El vector perpendicular debe apuntar hacia afuera de la palanquilla
-                direccion_esperada = direcciones_esperadas[nombre_lado]
-                
-                # Calcular el vector perpendicular inicial
-                perp_unit_initial = np.array([-lado_unit[1], lado_unit[0]])
-                
-                # Verificar si el vector perpendicular inicial apunta en la dirección esperada
-                # Si el producto escalar es positivo, están en la misma dirección
-                if np.dot(perp_unit_initial, direccion_esperada) > 0:
-                    perp_unit = perp_unit_initial
-                else:
-                    # Si no, invertir la dirección
-                    perp_unit = -perp_unit_initial
+                # Vector perpendicular apuntando hacia el interior (CORREGIDO)
+                # Usar directamente el vector de dirección correcta predefinido
+                perp_unit = direcciones_correctas[nombre_lado]
                 
                 # Inicializar para encontrar el punto más lejano
                 max_distancia = 0
                 punto_max = None
                 punto_proyectado = None
                 
-                # Buscar el punto más lejano en dirección perpendicular
+                # Buscar el punto más lejano en dirección perpendicular (hacia adentro)
                 for punto in contorno_pts:
                     # Vector desde p1 al punto
                     vec_p1_to_punto = punto - np.array(p1)
@@ -170,10 +158,9 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                         # Distancia perpendicular
                         dist_perp = np.linalg.norm(vec_proj_to_punto)
                         
-                        # CORRECCIÓN: Verificar que el punto está en la dirección correcta
-                        # Calculamos el producto escalar del vector punto-proyección con la dirección esperada
-                        # Solo consideramos el punto si está en la dirección esperada para ese lado
-                        if dist_perp > max_distancia and np.dot(vec_proj_to_punto, direccion_esperada) > 0:
+                        # CORRECCIÓN: Verificar que el punto está en la dirección CORRECTA (hacia adentro)
+                        # El producto escalar debe ser positivo con nuestra dirección predefinida
+                        if dist_perp > max_distancia and np.dot(vec_proj_to_punto, perp_unit) > 0:
                             max_distancia = dist_perp
                             punto_max = punto
                             punto_proyectado = punto_proj
@@ -199,12 +186,14 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     # Dibujar punto proyectado
                     cv2.circle(img_resultado, punto_proyectado, 3, (255, 255, 255), -1)
                     
-                    # Dibujar línea desde el punto proyectado hasta el punto máximo
+                    # CORRECCIÓN: Dibujar línea desde el punto proyectado hasta el punto máximo
+                    # (ahora correctamente desde el borde hacia el interior)
                     cv2.line(img_resultado, punto_proyectado, punto_max, (255, 255, 255), 1)
                     
                     # Dibujar punta de flecha
                     arrow_size = 10
-                    angle_rad = math.atan2(punto_max[1] - punto_proyectado[1], punto_max[0] - punto_proyectado[0])
+                    angle_rad = math.atan2(punto_max[1] - punto_proyectado[1], 
+                                          punto_max[0] - punto_proyectado[0])
                     pt_arrow1 = (int(punto_max[0] - arrow_size * math.cos(angle_rad + math.pi/6)),
                                 int(punto_max[1] - arrow_size * math.sin(angle_rad + math.pi/6)))
                     pt_arrow2 = (int(punto_max[0] - arrow_size * math.cos(angle_rad - math.pi/6)),

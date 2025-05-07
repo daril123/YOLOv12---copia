@@ -198,7 +198,7 @@ class AbombamientoProcessor:
             
             return report_path, text_report_path, None
     
-    def process(self, image, corners, image_name=None, output_dir=None, model=None, conf_threshold=0.35, mask=None):
+    def process(self, image, corners, image_name=None, output_dir=None, model=None, conf_threshold=0.35, mask=None, rotacion_info=None):
         """
         Procesa la imagen para detectar abombamiento con la visualización mejorada
         
@@ -210,7 +210,8 @@ class AbombamientoProcessor:
             model: Modelo para obtener contornos (opcional, si no se proporcionan las esquinas)
             conf_threshold: Umbral de confianza para detección
             mask: Máscara de la palanquilla (opcional)
-            
+            rotacion_info: Información sobre la rotación aplicada a la imagen
+                
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
@@ -256,6 +257,33 @@ class AbombamientoProcessor:
 
             # Medir abombamiento con visualización mejorada
             results = self.measure_abombamiento(image, corners, contorno_principal, mask)
+            
+            # Si hay información de rotación, ajustar los resultados
+            if rotacion_info is not None and 'angulo' in rotacion_info:
+                angulo_rotacion = rotacion_info['angulo']
+                
+                # Crear una copia de los resultados antes de modificar
+                adjusted_results = results.copy()
+                
+                # Ajustar el lado de máximo abombamiento
+                if 'lado_max_abombamiento' in adjusted_results:
+                    lado_max_rotado = adjusted_results['lado_max_abombamiento']
+                    lado_max_original = self.mapear_lados_originales(lado_max_rotado, angulo_rotacion)
+                    adjusted_results['lado_max_abombamiento'] = lado_max_original
+                    print(f"Ajustando lado máximo de abombamiento: {lado_max_rotado} -> {lado_max_original}")
+                
+                # Ajustar todos los lados en los resultados detallados
+                if 'resultados_por_lado' in adjusted_results and isinstance(adjusted_results['resultados_por_lado'], dict):
+                    resultados_ajustados = {}
+                    for lado_rotado, valores in adjusted_results['resultados_por_lado'].items():
+                        lado_original = self.mapear_lados_originales(lado_rotado, angulo_rotacion)
+                        resultados_ajustados[lado_original] = valores
+                        print(f"Ajustando resultados de lado: {lado_rotado} -> {lado_original}")
+                    
+                    adjusted_results['resultados_por_lado'] = resultados_ajustados
+                
+                # Actualizar los resultados originales con los ajustados
+                results = adjusted_results
             
             visualizations = {}
             
@@ -303,7 +331,7 @@ class AbombamientoProcessor:
                 default_vis = image.copy()
                 h, w = default_vis.shape[:2]
                 cv2.putText(default_vis, "Error en análisis de abombamiento", (w//4, h//2), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
                 visualizations['abombamiento_global'] = default_vis
             
             return {
@@ -311,3 +339,50 @@ class AbombamientoProcessor:
                 'visualizations': visualizations,
                 'report_paths': None
             }
+    def mapear_lados_originales(self, lado, angulo_rotacion):
+        """
+        Maps a side in the rotated image back to its original orientation
+        
+        Args:
+            lado: The side in the rotated image ("Lado 1 (Top)", "Lado 2 (Right)", etc.)
+            angulo_rotacion: The rotation angle (0, 90, 180, -90)
+            
+        Returns:
+            The side in the original orientation
+        """
+        # No rotation, sides remain the same
+        if angulo_rotacion == 0:
+            return lado
+        
+        # Mapping for 90 degrees rotation (clockwise)
+        if angulo_rotacion == 90:
+            mapping = {
+                "Lado 1 (Top)": "Lado 4 (Left)",
+                "Lado 2 (Right)": "Lado 1 (Top)",
+                "Lado 3 (Bottom)": "Lado 2 (Right)",
+                "Lado 4 (Left)": "Lado 3 (Bottom)"
+            }
+            return mapping.get(lado, lado)
+        
+        # Mapping for 180 degrees rotation
+        if angulo_rotacion == 180:
+            mapping = {
+                "Lado 1 (Top)": "Lado 3 (Bottom)",
+                "Lado 2 (Right)": "Lado 4 (Left)",
+                "Lado 3 (Bottom)": "Lado 1 (Top)",
+                "Lado 4 (Left)": "Lado 2 (Right)"
+            }
+            return mapping.get(lado, lado)
+        
+        # Mapping for -90 degrees rotation (270 degrees clockwise)
+        if angulo_rotacion == -90 or angulo_rotacion == 270:
+            mapping = {
+                "Lado 1 (Top)": "Lado 2 (Right)",
+                "Lado 2 (Right)": "Lado 3 (Bottom)",
+                "Lado 3 (Bottom)": "Lado 4 (Left)",
+                "Lado 4 (Left)": "Lado 1 (Top)"
+            }
+            return mapping.get(lado, lado)
+        
+        # For any other angle, return the original side
+        return lado

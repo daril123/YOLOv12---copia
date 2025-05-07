@@ -612,7 +612,8 @@ def predict_fn(input_data, models, output_dir=None):
         output_dir=output_dir,
         model=vertex_detector.model,
         conf_threshold=0.35,
-        mask=palanquilla_mask
+        mask=palanquilla_mask,
+        rotacion_info=rotacion_info  # Add this parameter
     )
     
     romboidad_processor = models['processors']['romboidad']
