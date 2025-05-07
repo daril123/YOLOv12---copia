@@ -433,147 +433,274 @@ def predict_fn(input_data, models, output_dir=None):
             cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_original.jpg"), debug_img)
     
-    # 5. Generar máscaras de zona con los vértices detectados
+    # 5. NUEVA SECCIÓN: ALINEAMIENTO DE LA PALANQUILLA
+    print("Realizando alineamiento de la palanquilla...")
+    try:
+        # Obtener contorno principal de la máscara para el alineamiento
+        contornos, _ = cv2.findContours(palanquilla_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contornos:
+            contorno_principal = max(contornos, key=cv2.contourArea)
+            
+            # Detectar etiquetas para determinar orientación
+            print("Detectando etiquetas para orientación...")
+            etiqueta_detections = []
+            try:
+                vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
+                
+                if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
+                    class_names = vertex_detector.model.names
+                    etiqueta_class_id = None
+                    
+                    print(f"Clases disponibles en el modelo de vértices: {class_names}")
+                    
+                    for id, name in class_names.items():
+                        if isinstance(name, str) and name.lower() == "etiqueta":
+                            etiqueta_class_id = id
+                            print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
+                            break
+                    
+                    if etiqueta_class_id is None and 0 in class_names:
+                        etiqueta_class_id = 0
+                        print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
+                    
+                    if etiqueta_class_id is not None:
+                        boxes = vertex_result.boxes
+                        for i, box in enumerate(boxes):
+                            cls_id = int(box.cls[0].item())
+                            if cls_id == etiqueta_class_id:
+                                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                                conf = float(box.conf[0].item())
+                                
+                                print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
+                                
+                                etiqueta_detections.append({
+                                    'bbox': (x1, y1, x2, y2),
+                                    'conf': conf,
+                                    'class': 'etiqueta',
+                                    'cls_id': cls_id
+                                })
+            except Exception as e:
+                print(f"Error al buscar etiquetas: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Determinar el lado para rotación (basado en etiqueta o abombamiento)
+            if etiqueta_detections:
+                print("Determinando lado de rotación basado en etiqueta...")
+                # Función para obtener centroide de la etiqueta
+                def obtener_centroide_etiqueta(image, mask_img, bbox):
+                    x1, y1, x2, y2 = bbox
+                    center_x = (x1 + x2) // 2
+                    center_y = (y1 + y2) // 2
+                    return (center_x, center_y)
+                
+                # Función para calcular la distancia a un segmento
+                def distancia_a_segmento(p1, p2, punto):
+                    p1, p2, punto = np.array(p1, dtype=float), np.array(p2, dtype=float), np.array(punto, dtype=float)
+                    v = p2 - p1
+                    u = punto - p1
+                    t = np.dot(u, v) / np.dot(v, v) if np.dot(v, v) != 0 else 0
+                    if t < 0:
+                        return np.linalg.norm(punto - p1)
+                    elif t > 1:
+                        return np.linalg.norm(punto - p2)
+                    else:
+                        return np.abs(np.cross(v, u)) / np.linalg.norm(v)
+                
+                # Determinar lado más cercano a la etiqueta
+                etiqueta_bbox = etiqueta_detections[0]['bbox']
+                centroide = obtener_centroide_etiqueta(image, palanquilla_mask, etiqueta_bbox)
+                
+                lados = [
+                    (vertices[0], vertices[1], "Lado 1 (Top)"),
+                    (vertices[1], vertices[2], "Lado 2 (Right)"),
+                    (vertices[2], vertices[3], "Lado 3 (Bottom)"),
+                    (vertices[3], vertices[0], "Lado 4 (Left)")
+                ]
+                
+                distancias = {}
+                for a, b, nombre in lados:
+                    d = distancia_a_segmento(a, b, centroide)
+                    distancias[nombre] = d
+                    print(f"Distancia al {nombre}: {d:.2f}")
+                
+                # Se obtiene el lado con la distancia mínima
+                lado_rotacion = min(distancias, key=distancias.get)
+                print("\nEl centroide está más cercano a:", lado_rotacion)
+            else:
+                print("No se encontró etiqueta, determinando lado basado en abombamiento...")
+                # Función para calcular distancia de un punto a una línea
+                def distancia_punto_a_linea(p1, p2, punto):
+                    p1, p2, punto = np.array(p1, dtype=float), np.array(p2, dtype=float), np.array(punto, dtype=float)
+                    return np.abs(np.cross(p2 - p1, punto - p1)) / np.linalg.norm(p2 - p1) if np.linalg.norm(p2 - p1) != 0 else 0
+                
+                # Definir los lados
+                lados = [
+                    (vertices[0], vertices[1], "Lado 1 (Top)"),
+                    (vertices[1], vertices[2], "Lado 2 (Right)"),
+                    (vertices[2], vertices[3], "Lado 3 (Bottom)"),
+                    (vertices[3], vertices[0], "Lado 4 (Left)"),
+                ]
+                
+                # Extraer los puntos del contorno
+                contorno_pts = contorno_principal.reshape(-1, 2)
+                puntos_por_lado = [[] for _ in range(4)]
+                
+                # Asignar cada punto del contorno al lado más cercano
+                for punto in contorno_pts:
+                    distancias = [distancia_a_segmento(p1, p2, punto) for p1, p2, _ in lados]
+                    indice_min = np.argmin(distancias)
+                    puntos_por_lado[indice_min].append(punto)
+                
+                # Calcular el abombamiento para cada lado
+                abombamientos = []
+                for i, (p1, p2, nombre) in enumerate(lados):
+                    puntos_lado = np.array(puntos_por_lado[i]) if puntos_por_lado[i] else np.array([])
+                    if len(puntos_lado) > 0:
+                        distancias = np.array([distancia_punto_a_linea(p1, p2, pt) for pt in puntos_lado])
+                        abombamiento = np.max(distancias) if len(distancias) > 0 else 0
+                    else:
+                        abombamiento = 0
+                    abombamientos.append(abombamiento)
+                    print(f"{nombre}: abombamiento = {abombamiento:.2f}")
+                
+                # Se determina el lado más recto (el de menor abombamiento)
+                indice_recto = np.argmin(abombamientos)
+                lado_rotacion = lados[indice_recto][2]
+                print("El lado más recto es:", lado_rotacion)
+            
+            # Realizar la rotación de la imagen
+            print(f"Rotando imagen según {lado_rotacion}...")
+            
+            # Definir los ángulos base de rotación para cada lado
+            angulos_rotacion_base = {
+                "Lado 1 (Top)": 180, 
+                "Lado 2 (Right)": 270, 
+                "Lado 3 (Bottom)": 180, 
+                "Lado 4 (Left)": 270
+            }
+            
+            # Calcular los ángulos de cada lado
+            angles = {}
+            # Lado 1 (Top): ángulo entre el lado (punto0 -> punto1) y la horizontal (eje X)
+            vec_top = vertices[1] - vertices[0]
+            angle_top = np.degrees(np.arctan2(float(vec_top[1]), float(vec_top[0])))
+            angles["Lado 1 (Top)"] = angle_top
+            
+            # Lado 2 (Right): ángulo entre el lado (punto1 -> punto2) y la vertical (eje Y)
+            vec_right = vertices[2] - vertices[1]
+            angle_right = np.degrees(np.arctan2(float(vec_right[0]), float(vec_right[1])))
+            angles["Lado 2 (Right)"] = angle_right
+            
+            # Lado 3 (Bottom): ángulo entre el lado (punto2 -> punto3) y la horizontal (eje X)
+            vec_bottom = vertices[3] - vertices[2]
+            angle_bottom = np.degrees(np.arctan2(float(vec_bottom[1]), float(vec_bottom[0])))
+            angles["Lado 3 (Bottom)"] = angle_bottom
+            
+            # Lado 4 (Left): ángulo entre el lado (punto3 -> punto0) y la vertical (eje Y)
+            vec_left = vertices[0] - vertices[3]
+            angle_left = np.degrees(np.arctan2(float(vec_left[0]), float(vec_left[1])))
+            angles["Lado 4 (Left)"] = angle_left
+            
+            # Mostrar los ángulos calculados
+            for lado, ang in angles.items():
+                print(f"{lado}: {ang:.2f} grados")
+            
+            # Calcular ángulo de rotación
+            angulo_lado = angles[lado_rotacion]
+            rotation_angle = -angulo_lado + angulos_rotacion_base[lado_rotacion]
+            print(f"Ángulo de rotación necesario: {rotation_angle}°")
+            
+            # Rotar la imagen
+            h, w = image.shape[:2]
+            center = (w // 2, h // 2)
+            rotation_matrix = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+            rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
+            
+            # Rotar también la máscara
+            rotated_mask = cv2.warpAffine(palanquilla_mask, rotation_matrix, (w, h), 
+                                         flags=cv2.INTER_NEAREST, 
+                                         borderMode=cv2.BORDER_CONSTANT, 
+                                         borderValue=0)
+            
+            # Rotar los vértices
+            vertices_homog = np.ones((len(vertices), 3))
+            vertices_homog[:, :2] = vertices
+            
+            rotated_vertices = np.zeros((len(vertices), 2), dtype=np.int32)
+            for i, vertex in enumerate(vertices_homog):
+                x = rotation_matrix[0, 0] * vertex[0] + rotation_matrix[0, 1] * vertex[1] + rotation_matrix[0, 2]
+                y = rotation_matrix[1, 0] * vertex[0] + rotation_matrix[1, 1] * vertex[1] + rotation_matrix[1, 2]
+                rotated_vertices[i] = [int(x), int(y)]
+            
+            # Actualizar las variables para usar las versiones rotadas
+            image = rotated_image
+            palanquilla_mask = rotated_mask
+            vertices = rotated_vertices
+            
+            # Guardar información de rotación
+            rotacion_info = {
+                'angulo': rotation_angle,
+                'lado_rotacion': lado_rotacion,
+                'lado_etiqueta': lado_rotacion if etiqueta_detections else None,
+                'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
+            }
+            
+            # Guardar visualización de diagnóstico de la imagen rotada
+            if output_dir:
+                # Visualizar máscara rotada
+                cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_rotada.jpg"), palanquilla_mask)
+                
+                # Visualizar vértices sobre la imagen rotada
+                debug_img = image.copy()
+                cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
+                for i, vertex in enumerate(vertices):
+                    cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
+                    cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_rotados.jpg"), debug_img)
+                
+                # Guardar comparación antes/después de rotación
+                # Redimensionar para comparación si las imágenes son grandes
+                max_dim = 800
+                if original_image.shape[0] > max_dim or original_image.shape[1] > max_dim:
+                    scale = max_dim / max(original_image.shape[0], original_image.shape[1])
+                    orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * scale), int(original_image.shape[0] * scale)))
+                    rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * scale), int(rotated_image.shape[0] * scale)))
+                    comparison = np.hstack((orig_resized, rot_resized))
+                else:
+                    comparison = np.hstack((original_image, rotated_image))
+                cv2.imwrite(os.path.join(debug_dir, f"{image_name}_comparacion_rotacion.jpg"), comparison)
+        else:
+            print("Error: No se encontraron contornos para el alineamiento")
+            rotacion_info = {
+                'angulo': 0,
+                'lado_rotacion': None,
+                'lado_etiqueta': None,
+                'etiqueta_bbox': None
+            }
+    except Exception as e:
+        print(f"Error en el proceso de alineamiento: {e}")
+        import traceback
+        traceback.print_exc()
+        rotacion_info = {
+            'angulo': 0,
+            'lado_rotacion': None,
+            'lado_etiqueta': None,
+            'etiqueta_bbox': None
+        }
+    
+    # 6. Generar máscaras de zona con los vértices detectados (ahora usando los vértices rotados)
     print(f"Generando máscaras de zonas")
     zones_img, zone_masks = visualize_zones(image, vertices)
     
-    # 6. Detectar etiquetas para determinar orientación
-    print("Detectando etiquetas para orientación...")
-    etiqueta_detections = []
-    try:
-        vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
-        
-        if hasattr(vertex_detector.model, "names") and vertex_result.boxes is not None:
-            class_names = vertex_detector.model.names
-            etiqueta_class_id = None
-            
-            print(f"Clases disponibles en el modelo de vértices: {class_names}")
-            
-            for id, name in class_names.items():
-                if isinstance(name, str) and name.lower() == "etiqueta":
-                    etiqueta_class_id = id
-                    print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
-                    break
-            
-            if etiqueta_class_id is None and 0 in class_names:
-                etiqueta_class_id = 0
-                print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
-            
-            if etiqueta_class_id is not None:
-                boxes = vertex_result.boxes
-                for i, box in enumerate(boxes):
-                    cls_id = int(box.cls[0].item())
-                    if cls_id == etiqueta_class_id:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                        conf = float(box.conf[0].item())
-                        
-                        print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
-                        
-                        etiqueta_detections.append({
-                            'bbox': (x1, y1, x2, y2),
-                            'conf': conf,
-                            'class': 'etiqueta',
-                            'cls_id': cls_id
-                        })
-    except Exception as e:
-        print(f"Error al buscar etiquetas: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # 7. Determinar orientación basada en etiquetas y zonas
-    angulo_rotacion, lado_detectado = determinar_orientacion_por_zonas(
-        zone_masks, 
-        etiqueta_detections[0] if etiqueta_detections else None,
-        vertices
-    )
-    
-    # 8. Rotar la imagen y toda la información si es necesario
-    rotated_image = image.copy()
-    rotated_vertices = vertices.copy()
-    rotated_mask = palanquilla_mask.copy() if palanquilla_mask is not None else None
-    rotated_zone_masks = {zona: mask.copy() for zona, mask in zone_masks.items()}
-    
-    if angulo_rotacion != 0:
-        print(f"Rotando imagen y datos {angulo_rotacion}° basado en {lado_detectado}...")
-        h, w = image.shape[:2]
-        center = (w // 2, h // 2)
-        rotation_matrix = cv2.getRotationMatrix2D(center, angulo_rotacion, 1.0)
-        
-        # Rotar la imagen
-        rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
-        
-        # Rotar los vértices
-        vertices_homog = np.ones((len(vertices), 3))
-        vertices_homog[:, :2] = vertices
-        
-        rotated_vertices = np.zeros((len(vertices), 2), dtype=np.int32)
-        for i, vertex in enumerate(vertices_homog):
-            x = rotation_matrix[0, 0] * vertex[0] + rotation_matrix[0, 1] * vertex[1] + rotation_matrix[0, 2]
-            y = rotation_matrix[1, 0] * vertex[0] + rotation_matrix[1, 1] * vertex[1] + rotation_matrix[1, 2]
-            rotated_vertices[i] = [int(x), int(y)]
-        
-        # Rotar la máscara de la palanquilla
-        if rotated_mask is not None:
-            rotated_mask = cv2.warpAffine(rotated_mask, rotation_matrix, (w, h), 
-                                          flags=cv2.INTER_NEAREST, 
-                                          borderMode=cv2.BORDER_CONSTANT, 
-                                          borderValue=0)
-        
-        # Rotar las máscaras de zonas
-        for zona, mask in zone_masks.items():
-            rotated_zone_masks[zona] = cv2.warpAffine(mask, rotation_matrix, (w, h), 
-                                                    flags=cv2.INTER_NEAREST, 
-                                                    borderMode=cv2.BORDER_CONSTANT, 
-                                                    borderValue=0)
-        
-        # Regenerar las zonas con los vértices rotados para garantizar coherencia
-        zones_img, rotated_zone_masks = visualize_zones(rotated_image, rotated_vertices)
-        
-        rotacion_info = {
-            'angulo': angulo_rotacion,
-            'lado_detectado': lado_detectado,
-            'lado_etiqueta': lado_detectado,  # AÑADIDO: para solucionar el error
-            'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
-        }
-    else:
-        print(f"No es necesario rotar la imagen, {lado_detectado} ya está en posición correcta.")
-        rotacion_info = {
-            'angulo': 0,
-            'lado_detectado': lado_detectado,
-            'lado_etiqueta': lado_detectado,  # AÑADIDO: para solucionar el error
-            'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
-        }
-    
-    # Usar los datos rotados para el resto del procesamiento
-    image = rotated_image
-    vertices = rotated_vertices
-    palanquilla_mask = rotated_mask
-    zone_masks = rotated_zone_masks
-    
-    # Guardar visualización de los vértices rotados y máscara para debug
-    if output_dir:
-        # Visualizar máscara rotada
-        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_rotada.jpg"), palanquilla_mask)
-        
-        # Visualizar vértices sobre la imagen rotada
-        debug_img = image.copy()
-        cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
-        for i, vertex in enumerate(vertices):
-            cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
-            cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_rotados.jpg"), debug_img)
-    
-    # 9. Detectar defectos con el detector de defectos
+    # 7. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
     detections, yolo_result = defect_detector.detect_defects(image)
     
     if not detections:
         print("No se detectaron defectos en esta imagen.")
     
-    # 10. Resto del procesamiento...
-    # [código para mapeo de clases, clasificación de defectos, etc.]
-    
-    # Código para el mapeo de clases
+    # 8. Código para el mapeo de clases
     class_mapping = {}
     if defect_detector.class_names:
         print("Creando mapeo de clases basado en modelo de defectos:")
@@ -600,10 +727,10 @@ def predict_fn(input_data, models, output_dir=None):
                 class_mapping[name] = name
                 print(f"  - '{name}' mantenido como '{name}'")
     
-    # Clasificar los defectos según su posición en las zonas
+    # 9. Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
     
-    # Procesar abombamiento y romboidad
+    # 10. Procesar abombamiento y romboidad
     abombamiento_processor = models['processors']['abombamiento']
     abombamiento_results = abombamiento_processor.process(
         image,
@@ -624,17 +751,15 @@ def predict_fn(input_data, models, output_dir=None):
         output_dir=output_dir
     )
     
-    # Procesar cada tipo de defecto
+    # 11. Procesar cada tipo de defecto
     results = {}
     results['abombamiento'] = abombamiento_results
     results['romboidad'] = romboidad_results
     
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
-            # Aquí está el bug que necesitamos corregir:
-            # INCORRECTO: processor = models['processors']['defect_type']
-            # CORRECTO:
-            processor = models['processors'][defect_type]  # <- CORRECCIÓN AQUÍ
+            # Corregimos el bug aquí: usamos defect_type directamente
+            processor = models['processors'][defect_type]
             results[defect_type] = processor.process(
                 defects, 
                 image, 
@@ -644,7 +769,7 @@ def predict_fn(input_data, models, output_dir=None):
                 output_dir=output_dir
             )
     
-    # Procesar etiquetas si se detectaron
+    # 12. Procesar etiquetas si se detectaron
     if etiqueta_detections and 'etiqueta' in models['processors']:
         print(f"Procesando {len(etiqueta_detections)} etiqueta(s) con OCR...")
         label_extractor = models['processors']['etiqueta']
