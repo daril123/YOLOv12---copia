@@ -25,77 +25,7 @@ class LabelExtractor:
         self.model_name = "granite3.2-vision"
         print(f"Label extractor initialized with OCR model: {self.model_name}")
     
-    def determinar_orientacion_etiqueta(self, etiqueta_detection, image, corners):
-        """
-        Determina la orientación de la imagen basada en la ubicación y
-        dimensiones de la etiqueta detectada.
-        
-        Args:
-            etiqueta_detection: Información sobre la etiqueta detectada
-            image: Imagen original
-            corners: Esquinas de la palanquilla
-            
-        Returns:
-            angulo_rotacion: Ángulo de rotación para que la etiqueta quede en la parte inferior
-            lado_etiqueta: Posición de la etiqueta ('arriba', 'derecha', 'abajo', 'izquierda')
-        """
-        # Extraer coordenadas de la caja contenedora de la etiqueta
-        x1, y1, x2, y2 = etiqueta_detection['bbox']
-        
-        # Calcular el centro de la etiqueta
-        centro_x = (x1 + x2) // 2
-        centro_y = (y1 + y2) // 2
-        
-        # Calcular dimensiones de la etiqueta
-        ancho_etiqueta = x2 - x1
-        alto_etiqueta = y2 - y1
-        
-        # Determinar si la etiqueta tiene orientación horizontal (ancho > alto)
-        es_horizontal = ancho_etiqueta > alto_etiqueta
-        
-        # Determinar el lado donde está la etiqueta respecto al centro de la palanquilla
-        if corners is not None and len(corners) == 4:
-            # Calcular centro de la palanquilla
-            centro_palanquilla_x = sum(corner[0] for corner in corners) / 4
-            centro_palanquilla_y = sum(corner[1] for corner in corners) / 4
-            
-            # Calcular distancias relativas
-            dx = centro_x - centro_palanquilla_x
-            dy = centro_y - centro_palanquilla_y
-            
-            # Determinar el lado predominante
-            if abs(dx) > abs(dy):
-                # La etiqueta está a la izquierda o derecha
-                if dx < 0:
-                    lado = 'izquierda'
-                    # CORRECCIÓN: Siempre rotar 90° si está a la izquierda, independientemente de la orientación
-                    angulo = 90
-                else:
-                    lado = 'derecha'
-                    # Si está a la derecha, rotar -90° si horizontal, 180° si vertical
-                    angulo = -90 if es_horizontal else 180
-            else:
-                # La etiqueta está arriba o abajo
-                if dy < 0:
-                    lado = 'arriba'
-                    # Si está arriba, rotación 180°
-                    angulo = 180 if es_horizontal else 90
-                else:
-                    lado = 'abajo'
-                    # Si está abajo y es horizontal, ya está en orientación correcta (0°)
-                    angulo = 0 if es_horizontal else -90
-        else:
-            # Si no hay vertices, usar solo las dimensiones de la etiqueta
-            lado = 'desconocido'
-            if es_horizontal:
-                angulo = 0  # Asumir que ya está en la orientación correcta
-            else:
-                angulo = 90  # Rotar para que el lado más largo sea horizontal
-        
-        print(f"Etiqueta detectada en lado: {lado}, orientación: {'horizontal' if es_horizontal else 'vertical'}")
-        print(f"Ángulo de rotación calculado: {angulo}°")
-        
-        return angulo, lado
+    
     
     def extract_json(self, texto):
         """
@@ -349,3 +279,93 @@ class LabelExtractor:
             'visualizations': visualizations,
             'report_paths': report_paths
         }
+def determinar_orientacion_por_zonas(zone_masks, etiqueta_detection=None, corners=None):
+        """
+        Determina la orientación óptima basada en las zonas de la palanquilla y la ubicación de etiquetas.
+        
+        Args:
+            zone_masks: Diccionario con máscaras para cada zona (rojo, amarillo, verde, morado)
+            etiqueta_detection: Información sobre la etiqueta detectada (opcional)
+            corners: Esquinas de la palanquilla (opcional)
+        
+        Returns:
+            angulo_rotacion: Ángulo óptimo de rotación
+            lado_detectado: Lado donde se detectó la etiqueta o donde se encuentra la zona relevante
+        """
+        h, w = zone_masks['verde'].shape[:2]
+        
+        # Si tenemos una detección de etiqueta, usarla como prioridad
+        if etiqueta_detection is not None:
+            x1, y1, x2, y2 = etiqueta_detection['bbox']
+            
+            # Calcular el centro de la etiqueta
+            centro_x = (x1 + x2) // 2
+            centro_y = (y1 + y2) // 2
+            
+            # Dimensiones de la etiqueta
+            ancho_etiqueta = x2 - x1
+            alto_etiqueta = y2 - y1
+            
+            # Si la etiqueta es horizontal o vertical
+            es_horizontal = ancho_etiqueta > alto_etiqueta
+            
+            # Calcular el centro de la palanquilla
+            if corners is not None and len(corners) == 4:
+                centro_palanquilla_x = sum(corner[0] for corner in corners) / 4
+                centro_palanquilla_y = sum(corner[1] for corner in corners) / 4
+            else:
+                # Si no tenemos esquinas, usar el centro de la imagen
+                centro_palanquilla_x = w // 2
+                centro_palanquilla_y = h // 2
+            
+            # Calcular la posición relativa de la etiqueta respecto al centro
+            dx = centro_x - centro_palanquilla_x
+            dy = centro_y - centro_palanquilla_y
+            
+            # Determinar el lado más cercano (arriba, abajo, izquierda, derecha)
+            if abs(dx) > abs(dy):
+                # Etiqueta más cercana a un lado horizontal
+                if dx < 0:
+                    lado = 'izquierda'
+                    angulo = 90  # Rotar para que quede abajo
+                else:
+                    lado = 'derecha'
+                    angulo = -90  # Rotar para que quede abajo
+            else:
+                # Etiqueta más cercana a un lado vertical
+                if dy < 0:
+                    lado = 'arriba'
+                    angulo = 180  # Rotar para que quede abajo
+                else:
+                    lado = 'abajo'
+                    angulo = 0  # Ya está abajo, no rotar
+                    
+            print(f"Orientación basada en etiqueta: {lado}, ángulo: {angulo}°")
+            return angulo, lado
+            
+        # Si no tenemos etiqueta, analizar la distribución de las zonas "verde" (intermedio exterior)
+        # para determinar dónde hay más contenido y rotar en consecuencia
+        verde_mask = zone_masks['verde']
+        
+        # Dividir la imagen en 4 regiones (superior, inferior, izquierda, derecha)
+        h_mid, w_mid = h // 2, w // 2
+        
+        # Contar píxeles blancos en cada región
+        superior = cv2.countNonZero(verde_mask[0:h_mid, 0:w])
+        inferior = cv2.countNonZero(verde_mask[h_mid:h, 0:w])
+        izquierda = cv2.countNonZero(verde_mask[0:h, 0:w_mid])
+        derecha = cv2.countNonZero(verde_mask[0:h, w_mid:w])
+        
+        # Encontrar la región con más píxeles (más contenido)
+        regiones = {'arriba': superior, 'abajo': inferior, 
+                    'izquierda': izquierda, 'derecha': derecha}
+        
+        lado_max = max(regiones, key=regiones.get)
+        
+        # Determinar el ángulo basado en el lado con más contenido
+        # El objetivo es rotar para que el lado con más contenido quede abajo
+        angulos = {'arriba': 180, 'derecha': -90, 'abajo': 0, 'izquierda': 90}
+        angulo = angulos[lado_max]
+        
+        print(f"Orientación basada en zonas: {lado_max}, ángulo: {angulo}°")
+        return angulo, lado_max

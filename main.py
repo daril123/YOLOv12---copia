@@ -29,7 +29,7 @@ from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
-from defects.etiqueta.label_extractor import LabelExtractor
+from defects.etiqueta.label_extractor import LabelExtractor,determinar_orientacion_por_zonas
 
 def model_fn(model_dir=None):
     """
@@ -181,7 +181,7 @@ def predict_fn(input_data, models, output_dir=None):
     print("Detectando etiquetas para orientación...")
     # Detectar etiquetas con el vertex_detector
     etiqueta_detections = []
-    
+
     try:
         # Obtener resultados del vertex detector para la imagen actual
         vertex_result = vertex_detector.model.predict(image, conf=vertex_detector.conf_threshold, device=vertex_detector.device)[0]
@@ -226,59 +226,68 @@ def predict_fn(input_data, models, output_dir=None):
                         })
     except Exception as e:
         print(f"Error al buscar etiquetas: {e}")
-        import traceback
+        import traceback    
         traceback.print_exc()
-    
+
     # Hacer una detección inicial rápida de vértices para tener referencia de la palanquilla
     initial_vertices = None
     try:
+        # Importante: Usar esta forma de importación directamente aquí, no referenciar la función
+        # directamente que es lo que causa el error
+        from utils.contorno import obtener_contorno_imagen
+        
         initial_vertices, _, _ = obtener_contorno_imagen(
             image, vertex_detector.model, vertex_detector.conf_threshold, 
             target_class=vertex_detector.target_class)
     except Exception as e:
         print(f"Error en detección inicial de vértices: {e}")
     
-    # Si se detectaron etiquetas, alinear la imagen según la orientación de la etiqueta
+    # Si se detectaron etiquetas o tenemos zonas, determinar la orientación
     rotated_image = image.copy()  # Por defecto, usar la imagen original
-    if etiqueta_detections:
-        # Ordenar etiquetas por confianza descendente
-        etiqueta_detections.sort(key=lambda x: x['conf'], reverse=True)
-        mejor_etiqueta = etiqueta_detections[0]  # Usar la etiqueta de mayor confianza
-        
-        # Determinar ángulo de rotación basado en la etiqueta
-        # MODIFICACIÓN: Usar el método de la clase en lugar de la función independiente
-        label_extractor = models['processors']['etiqueta']
-        angulo_rotacion, lado_etiqueta = label_extractor.determinar_orientacion_etiqueta(
-            mejor_etiqueta, image, initial_vertices)
-        
-        # Rotar la imagen
-        if angulo_rotacion != 0:
-            print(f"Rotando imagen {angulo_rotacion}° para alinear etiqueta...")
-            h, w = image.shape[:2]
-            center = (w // 2, h // 2)
-            rotation_matrix = cv2.getRotationMatrix2D(center, angulo_rotacion, 1.0)
-            rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
-            
-            # Guardar información sobre la rotación para el resultado final
-            rotacion_info = {
-                'angulo': angulo_rotacion,
-                'lado_etiqueta': lado_etiqueta,
-                'etiqueta_bbox': mejor_etiqueta['bbox']
-            }
-        else:
-            print("No es necesario rotar la imagen, etiqueta ya está en posición correcta.")
-            rotacion_info = {
-                'angulo': 0,
-                'lado_etiqueta': lado_etiqueta,
-                'etiqueta_bbox': mejor_etiqueta['bbox']
-            }
+
+    # Generar máscaras de zona temprano para tenerlas disponibles
+    if initial_vertices is not None:
+        temp_zones_img, temp_zone_masks = visualize_zones(image, initial_vertices)
     else:
-        print("No se detectaron etiquetas para orientar la imagen.")
+        # Si no tenemos vértices, crear máscaras vacías
+        h, w = image.shape[:2]
+        temp_zone_masks = {
+            'rojo': np.zeros((h, w), dtype=np.uint8),
+            'amarillo': np.zeros((h, w), dtype=np.uint8),
+            'verde': np.zeros((h, w), dtype=np.uint8),
+            'morado': np.zeros((h, w), dtype=np.uint8)
+        }
+
+    # Determinar orientación con nuestra nueva función
+    # que tiene en cuenta tanto etiquetas como zonas
+    angulo_rotacion, lado_detectado = determinar_orientacion_por_zonas(
+        temp_zone_masks, 
+        etiqueta_detections[0] if etiqueta_detections else None,
+        initial_vertices
+    )
+
+    # Rotar la imagen si es necesario
+    if angulo_rotacion != 0:
+        print(f"Rotando imagen {angulo_rotacion}° basado en {lado_detectado}...")
+        h, w = image.shape[:2]
+        center = (w // 2, h // 2)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angulo_rotacion, 1.0)
+        rotated_image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC)
+        
+        # Guardar información sobre la rotación para el resultado final
+        rotacion_info = {
+            'angulo': angulo_rotacion,
+            'lado_detectado': lado_detectado,
+            'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
+        }
+    else:
+        print(f"No es necesario rotar la imagen, {lado_detectado} ya está en posición correcta.")
         rotacion_info = {
             'angulo': 0,
-            'lado_etiqueta': 'no_detectada',
-            'etiqueta_bbox': None
+            'lado_detectado': lado_detectado,
+            'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
         }
+    
     
     # Usar la imagen rotada para el resto del procesamiento
     image = rotated_image
