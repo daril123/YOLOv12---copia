@@ -451,27 +451,38 @@ def predict_fn(input_data, models, output_dir=None):
                     class_names = vertex_detector.model.names
                     etiqueta_class_id = None
                     
+                    # MEJORA: Imprimir todas las clases disponibles para diagnóstico
                     print(f"Clases disponibles en el modelo de vértices: {class_names}")
-                    
                     for id, name in class_names.items():
-                        if isinstance(name, str) and name.lower() == "etiqueta":
+                        print(f"Clase ID {id}: {name}")
+                    
+                    # MODIFICACIÓN: Buscar explícitamente la clase etiqueta
+                    for id, name in class_names.items():
+                        if isinstance(name, str) and (name.lower() == "etiqueta" or 
+                                                     name.lower() == "class_0" or 
+                                                     name == "0"):
                             etiqueta_class_id = id
-                            print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}")
+                            print(f"ID de clase para 'etiqueta' encontrado: {etiqueta_class_id}, nombre: {name}")
                             break
                     
+                    # Si no encontramos "etiqueta", asumir que es la clase 0
                     if etiqueta_class_id is None and 0 in class_names:
                         etiqueta_class_id = 0
-                        print(f"No se encontró 'etiqueta' explícitamente. Usando class_0 como etiqueta, nombre: {class_names[0]}")
+                        print(f"Asumiendo que la clase 0 es etiqueta: {class_names[0]}")
                     
                     if etiqueta_class_id is not None:
                         boxes = vertex_result.boxes
+                        # Imprimir todas las detecciones para diagnóstico
+                        print(f"Total de detecciones: {len(boxes)}")
                         for i, box in enumerate(boxes):
                             cls_id = int(box.cls[0].item())
+                            conf = float(box.conf[0].item())
+                            print(f"Detección #{i+1}: Clase {cls_id}, Confianza {conf:.2f}")
+                            
                             if cls_id == etiqueta_class_id:
                                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                                conf = float(box.conf[0].item())
                                 
-                                print(f"Etiqueta detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
+                                print(f"ETIQUETA detectada con confianza {conf:.2f} en bbox: ({x1}, {y1}, {x2}, {y2})")
                                 
                                 etiqueta_detections.append({
                                     'bbox': (x1, y1, x2, y2),
@@ -637,7 +648,63 @@ def predict_fn(input_data, models, output_dir=None):
             image = rotated_image
             palanquilla_mask = rotated_mask
             vertices = rotated_vertices
-            
+            if etiqueta_detections:
+                print("Actualizando coordenadas de etiquetas después de la rotación...")
+                rotated_etiquetas = []
+                for etiqueta in etiqueta_detections:
+                    x1, y1, x2, y2 = etiqueta['bbox']
+                    
+                    # Convertir las esquinas del bbox a coordenadas homogéneas
+                    corners = np.array([
+                        [x1, y1, 1],
+                        [x2, y1, 1],
+                        [x1, y2, 1],
+                        [x2, y2, 1]
+                    ])
+                    
+                    # Aplicar la matriz de rotación a cada esquina
+                    rotated_corners = np.zeros((4, 2), dtype=np.int32)
+                    for i, corner in enumerate(corners):
+                        x = rotation_matrix[0, 0] * corner[0] + rotation_matrix[0, 1] * corner[1] + rotation_matrix[0, 2]
+                        y = rotation_matrix[1, 0] * corner[0] + rotation_matrix[1, 1] * corner[1] + rotation_matrix[1, 2]
+                        rotated_corners[i] = [int(x), int(y)]
+                    
+                    # Calcular el nuevo bounding box alineado con los ejes
+                    x_min = np.min(rotated_corners[:, 0])
+                    y_min = np.min(rotated_corners[:, 1])
+                    x_max = np.max(rotated_corners[:, 0])
+                    y_max = np.max(rotated_corners[:, 1])
+                    
+                    # Asegurar que las coordenadas estén dentro de los límites de la imagen
+                    x_min = max(0, min(w-1, x_min))
+                    y_min = max(0, min(h-1, y_min))
+                    x_max = max(0, min(w-1, x_max))
+                    y_max = max(0, min(h-1, y_max))
+                    
+                    # Crear la nueva etiqueta rotada
+                    rotated_etiqueta = etiqueta.copy()
+                    rotated_etiqueta['bbox'] = (x_min, y_min, x_max, y_max)
+                    rotated_etiquetas.append(rotated_etiqueta)
+                
+                # Reemplazar las etiquetas originales con las rotadas
+                etiqueta_detections = rotated_etiquetas
+                
+                # Debug - guardar imagen de las etiquetas rotadas
+                if output_dir:
+                    debug_etiquetas_img = rotated_image.copy()
+                    for i, etiqueta in enumerate(etiqueta_detections):
+                        x1, y1, x2, y2 = etiqueta['bbox']
+                        cv2.rectangle(debug_etiquetas_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        cv2.putText(debug_etiquetas_img, f"Etiqueta {i+1}", (x1, y1-10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    
+                    cv2.imwrite(os.path.join(debug_dir, f"{image_name}_etiquetas_rotadas.jpg"), debug_etiquetas_img)
+                    
+                    # Extraer y guardar las imágenes de las etiquetas rotadas para verificación
+                    for i, etiqueta in enumerate(etiqueta_detections):
+                        x1, y1, x2, y2 = etiqueta['bbox']
+                        etiqueta_img = rotated_image[y1:y2, x1:x2].copy()
+                        cv2.imwrite(os.path.join(debug_dir, f"{image_name}_etiqueta_{i+1}_rotada.jpg"), etiqueta_img)
             # Guardar información de rotación
             rotacion_info = {
                 'angulo': rotation_angle,
@@ -740,7 +807,7 @@ def predict_fn(input_data, models, output_dir=None):
         model=vertex_detector.model,
         conf_threshold=0.35,
         mask=palanquilla_mask,
-        rotacion_info=rotacion_info  # Add this parameter
+        rotacion_info=rotacion_info
     )
     
     romboidad_processor = models['processors']['romboidad']
