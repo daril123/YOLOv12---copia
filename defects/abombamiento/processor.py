@@ -255,35 +255,67 @@ class AbombamientoProcessor:
                 corners = np.array([[0, 0], [w-1, 0], [w-1, h-1], [0, h-1]])
                 contorno_principal = corners.reshape(-1, 1, 2)
 
-            # Medir abombamiento con visualización mejorada
-            results = self.measure_abombamiento(image, corners, contorno_principal, mask)
+            # PASO 1: Medir abombamiento con visualización mejorada en la imagen rotada
+            results_rotated = self.measure_abombamiento(image, corners, contorno_principal, mask)
             
-            # Si hay información de rotación, ajustar los resultados
+            # PASO 2: Ajustar los resultados según la rotación aplicada
             if rotacion_info is not None and 'angulo' in rotacion_info:
                 angulo_rotacion = rotacion_info['angulo']
+                print(f"Ajustando resultados de abombamiento para rotación de {angulo_rotacion}°...")
                 
-                # Crear una copia de los resultados antes de modificar
-                adjusted_results = results.copy()
+                # Crear una copia de los resultados para ajustar
+                adjusted_results = results_rotated.copy()
                 
-                # Ajustar el lado de máximo abombamiento
-                if 'lado_max_abombamiento' in adjusted_results:
-                    lado_max_rotado = adjusted_results['lado_max_abombamiento']
-                    lado_max_original = self.mapear_lados_originales(lado_max_rotado, angulo_rotacion)
-                    adjusted_results['lado_max_abombamiento'] = lado_max_original
-                    print(f"Ajustando lado máximo de abombamiento: {lado_max_rotado} -> {lado_max_original}")
-                
-                # Ajustar todos los lados en los resultados detallados
                 if 'resultados_por_lado' in adjusted_results and isinstance(adjusted_results['resultados_por_lado'], dict):
                     resultados_ajustados = {}
-                    for lado_rotado, valores in adjusted_results['resultados_por_lado'].items():
-                        lado_original = self.mapear_lados_originales(lado_rotado, angulo_rotacion)
-                        resultados_ajustados[lado_original] = valores
-                        print(f"Ajustando resultados de lado: {lado_rotado} -> {lado_original}")
                     
+                    # Para cada lado en los resultados de la imagen rotada
+                    for lado_rotado, valores in adjusted_results['resultados_por_lado'].items():
+                        # Mapear al lado original
+                        lado_original = self.mapear_lados_originales(lado_rotado, angulo_rotacion)
+                        print(f"Mapeando medidas: {lado_rotado} -> {lado_original}")
+                        
+                        # Transferir los valores al lado original
+                        resultados_ajustados[lado_original] = valores.copy()
+                        
+                        # IMPORTANTE: Actualizar las etiquetas de visualización con el lado correcto
+                        # (esto es para que la visualización muestre X1, X2, etc. en los lados correctos)
+                        if 'indice' in valores:
+                            # Mantener el índice original (1, 2, 3, 4)
+                            indice_original = valores['indice']
+                            resultados_ajustados[lado_original]['indice'] = indice_original
+                    
+                    # Reemplazar los resultados por lado con los ajustados
                     adjusted_results['resultados_por_lado'] = resultados_ajustados
+                    
+                    # Ajustar también el lado de máximo abombamiento
+                    if 'lado_max_abombamiento' in adjusted_results:
+                        lado_max_rotado = adjusted_results['lado_max_abombamiento']
+                        lado_max_original = self.mapear_lados_originales(lado_max_rotado, angulo_rotacion)
+                        adjusted_results['lado_max_abombamiento'] = lado_max_original
+                        print(f"Lado con máximo abombamiento ajustado: {lado_max_rotado} -> {lado_max_original}")
                 
-                # Actualizar los resultados originales con los ajustados
+                # Usar los resultados ajustados
                 results = adjusted_results
+            else:
+                # Sin rotación, usar los resultados tal cual
+                results = results_rotated
+                
+            # PASO 3: Recrear la visualización con los resultados ajustados
+            if 'resultados_por_lado' in results:
+                try:
+                    # Crear visualización mejorada con los resultados ajustados
+                    imagen_resultado, _ = visualizar_abombamiento_enhanced(
+                        image, 
+                        corners, 
+                        contorno_principal,
+                        resultados_ajustados=results['resultados_por_lado']  # Pasar los resultados ajustados
+                    )
+                    # Actualizar la visualización
+                    results['visualization'] = imagen_resultado
+                except Exception as e:
+                    print(f"Error al crear visualización ajustada: {e}")
+                    # Mantener la visualización original si falla
             
             visualizations = {}
             
@@ -346,43 +378,57 @@ class AbombamientoProcessor:
         Args:
             lado: The side in the rotated image ("Lado 1 (Top)", "Lado 2 (Right)", etc.)
             angulo_rotacion: The rotation angle (0, 90, 180, -90)
-            
+                
         Returns:
             The side in the original orientation
         """
+        # Normalizar el ángulo a uno de los ángulos estándar (0, 90, 180, 270, -90)
+        angulo_normalizado = round(angulo_rotacion / 90) * 90
+        if angulo_normalizado == 360 or angulo_normalizado == -360:
+            angulo_normalizado = 0
+        elif angulo_normalizado == -90:
+            angulo_normalizado = 270
+        elif angulo_normalizado == -180:
+            angulo_normalizado = 180
+        elif angulo_normalizado == -270:
+            angulo_normalizado = 90
+        
+        print(f"Ángulo normalizado para mapeo: {angulo_normalizado}°")
+        
         # No rotation, sides remain the same
-        if angulo_rotacion == 0:
+        if angulo_normalizado == 0:
             return lado
         
         # Mapping for 90 degrees rotation (clockwise)
-        if angulo_rotacion == 90:
+        if angulo_normalizado == 90:
             mapping = {
-                "Lado 1 (Top)": "Lado 4 (Left)",
-                "Lado 2 (Right)": "Lado 1 (Top)",
-                "Lado 3 (Bottom)": "Lado 2 (Right)",
-                "Lado 4 (Left)": "Lado 3 (Bottom)"
+                "Lado 1 (Top)": "Lado 4 (Left)",     # Top becomes Left
+                "Lado 2 (Right)": "Lado 1 (Top)",    # Right becomes Top
+                "Lado 3 (Bottom)": "Lado 2 (Right)", # Bottom becomes Right
+                "Lado 4 (Left)": "Lado 3 (Bottom)"   # Left becomes Bottom
             }
             return mapping.get(lado, lado)
         
         # Mapping for 180 degrees rotation
-        if angulo_rotacion == 180:
+        if angulo_normalizado == 180:
             mapping = {
-                "Lado 1 (Top)": "Lado 3 (Bottom)",
-                "Lado 2 (Right)": "Lado 4 (Left)",
-                "Lado 3 (Bottom)": "Lado 1 (Top)",
-                "Lado 4 (Left)": "Lado 2 (Right)"
+                "Lado 1 (Top)": "Lado 3 (Bottom)",   # Top becomes Bottom
+                "Lado 2 (Right)": "Lado 4 (Left)",   # Right becomes Left
+                "Lado 3 (Bottom)": "Lado 1 (Top)",   # Bottom becomes Top
+                "Lado 4 (Left)": "Lado 2 (Right)"    # Left becomes Right
             }
             return mapping.get(lado, lado)
         
-        # Mapping for -90 degrees rotation (270 degrees clockwise)
-        if angulo_rotacion == -90 or angulo_rotacion == 270:
+        # Mapping for 270 degrees rotation (clockwise) = -90 degrees (counter-clockwise)
+        if angulo_normalizado == 270 or angulo_normalizado == -90:
             mapping = {
-                "Lado 1 (Top)": "Lado 2 (Right)",
-                "Lado 2 (Right)": "Lado 3 (Bottom)",
-                "Lado 3 (Bottom)": "Lado 4 (Left)",
-                "Lado 4 (Left)": "Lado 1 (Top)"
+                "Lado 1 (Top)": "Lado 2 (Right)",    # Top becomes Right
+                "Lado 2 (Right)": "Lado 3 (Bottom)", # Right becomes Bottom
+                "Lado 3 (Bottom)": "Lado 4 (Left)",  # Bottom becomes Left
+                "Lado 4 (Left)": "Lado 1 (Top)"      # Left becomes Top
             }
             return mapping.get(lado, lado)
         
-        # For any other angle, return the original side
+        # For any other angle, warn and return the original side
+        print(f"ADVERTENCIA: Ángulo de rotación no estándar: {angulo_rotacion}° (normalizado a {angulo_normalizado}°)")
         return lado

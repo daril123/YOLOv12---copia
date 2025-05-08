@@ -198,7 +198,7 @@ def calcular_abombamiento(contorno, contorno_principal, mask=None):
     """
     Calcula el abombamiento (desviación) para cada lado del cuadrilátero.
     Método corregido que asegura que las proyecciones se realizan perpendiculares 
-    a cada lado y en la dirección correcta hacia afuera.
+    a cada lado y en la dirección correcta hacia AFUERA.
     
     Args:
         contorno: Vértices de la palanquilla [top-left, top-right, bottom-right, bottom-left]
@@ -230,7 +230,7 @@ def calcular_abombamiento(contorno, contorno_principal, mask=None):
             "Lado 4 (Left)": (contorno[3], contorno[0])
         }
         
-        # Definir direcciones esperadas para cada lado
+        # CORRECCIÓN: Definir direcciones esperadas para cada lado (hacia AFUERA)
         direcciones_esperadas = {
             "Lado 1 (Top)": np.array([0, -1]),     # Hacia arriba
             "Lado 2 (Right)": np.array([1, 0]),    # Hacia la derecha
@@ -260,22 +260,15 @@ def calcular_abombamiento(contorno, contorno_principal, mask=None):
                 # Vector unitario del lado
                 lado_unit = lado_vec / lado_len
                 
-                # Vector perpendicular al lado (rotación de 90 grados)
-                perp_unit_initial = np.array([-lado_unit[1], lado_unit[0]])
-                
-                # Verificar y ajustar la dirección del vector perpendicular
-                direccion_esperada = direcciones_esperadas[nombre]
-                if np.dot(perp_unit_initial, direccion_esperada) > 0:
-                    perp_unit = perp_unit_initial
-                else:
-                    perp_unit = -perp_unit_initial
+                # CORRECCIÓN: Obtener la dirección correcta para este lado
+                perp_unit = direcciones_esperadas[nombre]
                 
                 # Inicializar para encontrar el punto más lejano
                 max_distancia = 0
                 punto_max = None
                 proyeccion_max = None
                 
-                # Buscar el punto más lejano en dirección perpendicular
+                # Buscar el punto más lejano EN LA DIRECCIÓN CORRECTA
                 for punto in contorno_pts:
                     # Vector desde p1 al punto
                     vec_p1_to_punto = punto - np.array(p1, dtype=float)
@@ -294,8 +287,8 @@ def calcular_abombamiento(contorno, contorno_principal, mask=None):
                         # Distancia perpendicular
                         dist_perp = np.linalg.norm(vec_proj_to_punto)
                         
-                        # Solo considerar el punto si está en la dirección correcta
-                        if dist_perp > max_distancia and np.dot(vec_proj_to_punto, direccion_esperada) > 0:
+                        # CORRECCIÓN CRUCIAL: Solo considerar puntos en la dirección CORRECTA
+                        if dist_perp > max_distancia and np.dot(vec_proj_to_punto, perp_unit) > 0:
                             max_distancia = dist_perp
                             punto_max = punto
                             proyeccion_max = punto_proj

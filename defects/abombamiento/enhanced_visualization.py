@@ -64,12 +64,13 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
             print(f"Error al procesar contorno principal: {e}")
             contorno_pts = np.array([])
         
-        # Definir vectores de dirección correctos para cada lado (hacia adentro)
+        # CORRECCIÓN: Definir vectores de dirección correctos para cada lado (hacia AFUERA)
+        # Esto es crucial para que los vectores X apunten en la dirección correcta
         direcciones_correctas = {
-            "Lado 1 (Top)": np.array([0, 1]),      # Hacia abajo (interior)
-            "Lado 2 (Right)": np.array([-1, 0]),   # Hacia la izquierda (interior)
-            "Lado 3 (Bottom)": np.array([0, -1]),  # Hacia arriba (interior)
-            "Lado 4 (Left)": np.array([1, 0])      # Hacia la derecha (interior)
+            "Lado 1 (Top)": np.array([0, -1]),     # Hacia arriba
+            "Lado 2 (Right)": np.array([1, 0]),    # Hacia la derecha
+            "Lado 3 (Bottom)": np.array([0, 1]),   # Hacia abajo
+            "Lado 4 (Left)": np.array([-1, 0])     # Hacia la izquierda
         }
         
         # Guardar los resultados de cada lado
@@ -130,8 +131,8 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                 # Vector unitario del lado
                 lado_unit = lado_vec / lado_len
                 
-                # Vector perpendicular apuntando hacia el interior (CORREGIDO)
-                # Usar directamente el vector de dirección correcta predefinido
+                # CORRECCIÓN: Obtener la dirección correcta para este lado específico
+                # Ya no usamos la perpendicular calculada que podría tener dirección incorrecta
                 perp_unit = direcciones_correctas[nombre_lado]
                 
                 # Inicializar para encontrar el punto más lejano
@@ -139,7 +140,7 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                 punto_max = None
                 punto_proyectado = None
                 
-                # Buscar el punto más lejano en dirección perpendicular (hacia adentro)
+                # Buscar el punto más lejano EN LA DIRECCIÓN CORRECTA
                 for punto in contorno_pts:
                     # Vector desde p1 al punto
                     vec_p1_to_punto = punto - np.array(p1)
@@ -158,7 +159,7 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                         # Distancia perpendicular
                         dist_perp = np.linalg.norm(vec_proj_to_punto)
                         
-                        # CORRECCIÓN: Verificar que el punto está en la dirección CORRECTA (hacia adentro)
+                        # CORRECCIÓN CRUCIAL: Solo considerar puntos en la dirección CORRECTA
                         # El producto escalar debe ser positivo con nuestra dirección predefinida
                         if dist_perp > max_distancia and np.dot(vec_proj_to_punto, perp_unit) > 0:
                             max_distancia = dist_perp
@@ -186,8 +187,7 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     # Dibujar punto proyectado
                     cv2.circle(img_resultado, punto_proyectado, 3, (255, 255, 255), -1)
                     
-                    # CORRECCIÓN: Dibujar línea desde el punto proyectado hasta el punto máximo
-                    # (ahora correctamente desde el borde hacia el interior)
+                    # Dibujar línea desde el punto proyectado hasta el punto máximo
                     cv2.line(img_resultado, punto_proyectado, punto_max, (255, 255, 255), 1)
                     
                     # Dibujar punta de flecha

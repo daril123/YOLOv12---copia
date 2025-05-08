@@ -16,7 +16,7 @@ from models.defect_detector import DefectDetector
 from common.zone_generator import visualize_zones
 from common.defect_classifier import classify_defects_with_masks, visualize_results_with_masks
 from utils.utils import order_points
-from utils.contorno import obtener_contorno_imagen, rotar_imagen_lado, redimensionar_recortar_palanquilla
+
 
 # Importar procesadores de defectos específicos
 from defects.diagonal_crack.processor import DiagonalCrackProcessor
@@ -29,7 +29,7 @@ from defects.estrella.processor import EstrellaProcessor
 from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
-from defects.etiqueta.label_extractor import LabelExtractor,determinar_orientacion_por_zonas
+from defects.etiqueta.label_extractor import LabelExtractor
 def generar_mascara_alternativa(image):
     """
     Genera una máscara alternativa cuando la detección con el modelo falla
@@ -433,6 +433,44 @@ def predict_fn(input_data, models, output_dir=None):
             cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_original.jpg"), debug_img)
     
+    # MODIFICADO: NUEVO PUNTO 4.5 - Procesar abombamiento ANTES de la rotación
+    print("Procesando abombamiento con imagen original (antes de rotación)...")
+    try:
+        # Obtener contorno principal de la máscara para el análisis de abombamiento
+        contornos, _ = cv2.findContours(palanquilla_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contorno_principal = max(contornos, key=cv2.contourArea) if contornos else None
+        
+        # Realizar análisis de abombamiento
+        abombamiento_processor = models['processors']['abombamiento']
+        abombamiento_results_original = abombamiento_processor.process(
+            image,  # Imagen original antes de rotar
+            vertices,  # Vértices originales
+            image_name=image_name,
+            output_dir=output_dir,
+            model=vertex_detector.model,
+            conf_threshold=0.35,
+            mask=palanquilla_mask
+        )
+        
+        # Guardar los resultados para usarlos después
+        abombamiento_data_original = abombamiento_results_original.get('processed_data', {})
+        abombamiento_viz_original = abombamiento_results_original.get('visualizations', {})
+        abombamiento_reports_original = abombamiento_results_original.get('report_paths', None)
+        
+        print(f"Abombamiento analizado exitosamente con la imagen original")
+    except Exception as e:
+        print(f"Error al procesar abombamiento con imagen original: {e}")
+        import traceback
+        traceback.print_exc()
+        # Crear valores por defecto en caso de error
+        abombamiento_data_original = {
+            'lado_max_abombamiento': "Lado 1 (Top)",
+            'max_abombamiento_porcentaje': 0.0,
+            'max_abombamiento_pixeles': 0.0
+        }
+        abombamiento_viz_original = {}
+        abombamiento_reports_original = None
+    
     # 5. NUEVA SECCIÓN: ALINEAMIENTO DE LA PALANQUILLA
     print("Realizando alineamiento de la palanquilla...")
     try:
@@ -797,19 +835,8 @@ def predict_fn(input_data, models, output_dir=None):
     # 9. Clasificar los defectos según su posición en las zonas
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
     
-    # 10. Procesar abombamiento y romboidad
-    abombamiento_processor = models['processors']['abombamiento']
-    abombamiento_results = abombamiento_processor.process(
-        image,
-        vertices,
-        image_name=image_name,
-        output_dir=output_dir,
-        model=vertex_detector.model,
-        conf_threshold=0.35,
-        mask=palanquilla_mask,
-        rotacion_info=rotacion_info
-    )
-    
+    # 10. Procesar romboidad (el abombamiento ya se procesó antes de la rotación)
+    # MODIFICADO: No volver a procesar abombamiento, usar los resultados originales
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,
@@ -820,7 +847,15 @@ def predict_fn(input_data, models, output_dir=None):
     
     # 11. Procesar cada tipo de defecto
     results = {}
-    results['abombamiento'] = abombamiento_results
+    
+    # MODIFICADO: Usar los resultados de abombamiento obtenidos ANTES de la rotación
+    print("Usando resultados de abombamiento pre-rotación...")
+    results['abombamiento'] = {
+        'processed_data': abombamiento_data_original,
+        'visualizations': abombamiento_viz_original,
+        'report_paths': abombamiento_reports_original
+    }
+    
     results['romboidad'] = romboidad_results
     
     for defect_type, defects in classified_detections.items():
