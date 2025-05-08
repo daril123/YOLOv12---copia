@@ -764,17 +764,42 @@ def predict_fn(input_data, models, output_dir=None):
                     cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                 cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_rotados.jpg"), debug_img)
                 
-                # Guardar comparación antes/después de rotación
-                # Redimensionar para comparación si las imágenes son grandes
-                max_dim = 800
-                if original_image.shape[0] > max_dim or original_image.shape[1] > max_dim:
-                    scale = max_dim / max(original_image.shape[0], original_image.shape[1])
-                    orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * scale), int(original_image.shape[0] * scale)))
-                    rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * scale), int(rotated_image.shape[0] * scale)))
-                    comparison = np.hstack((orig_resized, rot_resized))
-                else:
-                    comparison = np.hstack((original_image, rotated_image))
-                cv2.imwrite(os.path.join(debug_dir, f"{image_name}_comparacion_rotacion.jpg"), comparison)
+                # Guardar comparación antes/después de rotación - FIX APLICADO AQUÍ
+                try:
+                    # Redimensionar para comparación si las imágenes son grandes
+                    max_dim = 800
+                    if original_image.shape[0] > max_dim or original_image.shape[1] > max_dim:
+                        scale = max_dim / max(original_image.shape[0], original_image.shape[1])
+                        orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * scale), int(original_image.shape[0] * scale)))
+                        rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * scale), int(rotated_image.shape[0] * scale)))
+                        
+                        # Ensure both images have the same height for hstack
+                        min_height = min(orig_resized.shape[0], rot_resized.shape[0])
+                        orig_resized = cv2.resize(orig_resized, (int(orig_resized.shape[1] * min_height / orig_resized.shape[0]), min_height))
+                        rot_resized = cv2.resize(rot_resized, (int(rot_resized.shape[1] * min_height / rot_resized.shape[0]), min_height))
+                        
+                        comparison = np.hstack((orig_resized, rot_resized))
+                    else:
+                        # For smaller images, ensure same height as well
+                        min_height = min(original_image.shape[0], rotated_image.shape[0])
+                        orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * min_height / original_image.shape[0]), min_height))
+                        rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * min_height / rotated_image.shape[0]), min_height))
+                        comparison = np.hstack((orig_resized, rot_resized))
+                    
+                    # Add labels to comparison image
+                    cv2.putText(comparison, "ORIGINAL", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    
+                    # Add rotated label on the right side
+                    start_x = orig_resized.shape[1] + 10  # Start after the original image
+                    cv2.putText(comparison, f"ROTADA {rotation_angle:.1f}°", (start_x, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    
+                    cv2.imwrite(os.path.join(debug_dir, f"{image_name}_comparacion_rotacion.jpg"), comparison)
+                except Exception as e:
+                    # Silently continue if comparison visualization fails
+                    print(f"Nota: No se pudo crear la visualización de comparación: {e}")
+                    pass
         else:
             print("Error: No se encontraron contornos para el alineamiento")
             rotacion_info = {
