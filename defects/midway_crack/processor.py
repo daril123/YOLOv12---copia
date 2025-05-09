@@ -128,7 +128,7 @@ class MidwayCrackProcessor:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             
             # Guardar la visualización del ROI
-            cv2.imwrite("temp_midway_crack_analysis_roi.jpg", viz_img)
+            #cv2.imwrite("temp_midway_crack_analysis_roi.jpg", viz_img)
             
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
@@ -210,7 +210,7 @@ class MidwayCrackProcessor:
                               (0, 165, 255), 2, 15, f"D={D:.1f}px")
                     
                     # Guardar la visualización completa
-                    cv2.imwrite("temp_midway_crack_analysis_full.jpg", full_img)
+                    #cv2.imwrite("temp_midway_crack_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global: {e}")
                     import traceback

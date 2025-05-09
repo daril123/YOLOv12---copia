@@ -68,7 +68,7 @@ class RechupeProcessor:
                 draw_arrow(viz_img, local_pt1, local_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px", (5, -10))
             
             # Guardar la visualización del ROI
-            cv2.imwrite("temp_rechupe_analysis_roi.jpg", viz_img)
+            #cv2.imwrite("temp_rechupe_analysis_roi.jpg", viz_img)
             
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
@@ -133,7 +133,7 @@ class RechupeProcessor:
                               (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
                     
                     # Guardar la visualización completa
-                    cv2.imwrite("temp_rechupe_analysis_full.jpg", full_img)
+                    #cv2.imwrite("temp_rechupe_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global para rechupe: {e}")
                     import traceback

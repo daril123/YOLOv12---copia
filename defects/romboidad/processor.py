@@ -116,7 +116,7 @@ class RomboidadProcessor:
                        (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Guardar visualización temporalmente
-            cv2.imwrite("temp_romboidad_analysis.jpg", viz_img)
+            #cv2.imwrite("temp_romboidad_analysis.jpg", viz_img)
         
         return {
             'resultados': results,

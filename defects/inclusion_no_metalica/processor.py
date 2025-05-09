@@ -176,7 +176,7 @@ class InclusionNoMetalicaProcessor:
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 
                 # Guardar la visualización del ROI
-                cv2.imwrite("temp_inclusion_no_metalica_analysis_roi.jpg", viz_img)
+                #cv2.imwrite("temp_inclusion_no_metalica_analysis_roi.jpg", viz_img)
                 
                 # Visualización global (código igual que antes)
                 full_img = None
@@ -240,7 +240,7 @@ class InclusionNoMetalicaProcessor:
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
                         # Guardar la visualización completa
-                        cv2.imwrite("temp_inclusion_no_metalica_analysis_full.jpg", full_img)
+                        #cv2.imwrite("temp_inclusion_no_metalica_analysis_full.jpg", full_img)
                     except Exception as e:
                         print(f"Error al crear visualización global para inclusiones no metálicas: {e}")
                         import traceback

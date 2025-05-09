@@ -1278,8 +1278,9 @@ def output_fn(prediction_results, output_dir, input_data):
                 json_path = os.path.join(defect_dir, f"{name}_{defect_type}.json")
                 with open(json_path, 'w', encoding='utf-8') as f:
                     json.dump(serializable_data, f, ensure_ascii=False, indent=4, 
-                            default=lambda x: float(x) if isinstance(x, np.float32) else str(x))
-                
+                            default=lambda x: float(x) if isinstance(x, np.floating) else 
+                                            int(x) if isinstance(x, np.integer) else str(x))
+
                 output_paths[f'{defect_type}_json'] = json_path
             
             # MODIFICADO: Dibujar TODOS los defectos del mismo tipo en UNA ÚNICA imagen consolidada

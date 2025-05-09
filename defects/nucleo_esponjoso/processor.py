@@ -100,7 +100,7 @@ class NucleoEsponjosoProcessor:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             
             # Guardar la visualización del ROI
-            cv2.imwrite("temp_nucleo_esponjoso_analysis_roi.jpg", viz_img)
+            #cv2.imwrite("temp_nucleo_esponjoso_analysis_roi.jpg", viz_img)
             
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
@@ -184,7 +184,7 @@ class NucleoEsponjosoProcessor:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     # Guardar la visualización completa
-                    cv2.imwrite("temp_nucleo_esponjoso_analysis_full.jpg", full_img)
+                    #cv2.imwrite("temp_nucleo_esponjoso_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global para núcleo esponjoso: {e}")
                     import traceback

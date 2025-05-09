@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import math
 
-def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
+def visualizar_abombamiento_enhanced(image, contorno, contorno_principal, resultados_ajustados=None):
     """
     Visualización mejorada con vectores perpendiculares para X y etiquetas claras para D
     con corrección para asegurar que las proyecciones se realicen en la dirección correcta.
@@ -11,6 +11,7 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
         image: Imagen original
         contorno: Vértices de la palanquilla [top-left, top-right, bottom-right, bottom-left]
         contorno_principal: Contorno completo de la palanquilla
+        resultados_ajustados: Resultados predefinidos para visualizar (opcional)
         
     Returns:
         Imagen con visualización mejorada y diccionario con resultados por lado
@@ -56,6 +57,68 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
         # Título principal
         cv2.putText(img_resultado, "Análisis de Abombamiento", (20, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        # Usar resultados predefinidos si se proporcionan (para reproducir visualizaciones)
+        if resultados_ajustados is not None:
+            resultados_por_lado = resultados_ajustados
+            
+            # Dibujar lados de la palanquilla
+            for nombre_lado, (p1, p2) in lados.items():
+                # Convertir a tupla de enteros para dibujar
+                p1 = tuple(np.array(p1).astype(int))
+                p2 = tuple(np.array(p2).astype(int))
+                
+                # Dibujar la línea del lado con su color específico
+                cv2.line(img_resultado, p1, p2, colores[nombre_lado], 2)
+            
+            # Dibujar las métricas de cada lado según los resultados ajustados
+            y_offset = 70  # Posición inicial para texto
+            for nombre_lado, datos in resultados_por_lado.items():
+                indice = indices[nombre_lado]
+                color_lado = colores[nombre_lado]
+                
+                # Obtener las métricas
+                X = datos.get('X_px', 0)
+                D = datos.get('D_px', 1)
+                C = datos.get('C_porcentaje', 0)
+                
+                # Dibujar punto máximo y proyección si están disponibles
+                if 'punto_max' in datos and 'punto_proyectado' in datos:
+                    punto_max = datos['punto_max']
+                    punto_proyectado = datos['punto_proyectado']
+                    
+                    if punto_max is not None and punto_proyectado is not None:
+                        # Convertir a enteros para dibujar
+                        punto_max = tuple(int(x) for x in punto_max)
+                        punto_proyectado = tuple(int(x) for x in punto_proyectado)
+                        
+                        # Dibujar punto rojo (punto de máximo abombamiento)
+                        cv2.circle(img_resultado, punto_max, 5, (0, 0, 255), -1)
+                        
+                        # Dibujar punto en la proyección
+                        cv2.circle(img_resultado, punto_proyectado, 3, (255, 255, 255), -1)
+                        
+                        # Dibujar línea entre ellos
+                        cv2.line(img_resultado, punto_proyectado, punto_max, (255, 255, 255), 1)
+                
+                # Formar texto para el resumen
+                texto_lado = f"{nombre_lado}: X{indice}={X:.1f}px, D{indice}={D:.1f}px, C={C:.1f}%"
+                
+                # Añadir fondo negro para mejor visibilidad
+                (text_width, text_height), _ = cv2.getTextSize(texto_lado, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                cv2.rectangle(img_resultado, 
+                            (20, y_offset - text_height - 5), 
+                            (20 + text_width + 10, y_offset + 5), 
+                            (0, 0, 0), -1)
+                
+                # Añadir texto con el color correspondiente al lado
+                cv2.putText(img_resultado, texto_lado, (25, y_offset), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_lado, 1)
+                
+                # Incrementar el offset para el siguiente texto
+                y_offset += 25
+            
+            return img_resultado, resultados_por_lado
         
         # Extraer todos los puntos del contorno principal
         try:
@@ -115,9 +178,9 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
             # Agregar fondo negro para mejor visibilidad
             (text_width, text_height), _ = cv2.getTextSize(etiqueta_D, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             cv2.rectangle(img_resultado, 
-                         (pos_D[0] - 5, pos_D[1] - text_height - 5), 
-                         (pos_D[0] + text_width + 5, pos_D[1] + 5), 
-                         (0, 0, 0), -1)
+                        (pos_D[0] - 5, pos_D[1] - text_height - 5), 
+                        (pos_D[0] + text_width + 5, pos_D[1] + 5), 
+                        (0, 0, 0), -1)
             
             # Dibujar etiqueta D
             cv2.putText(img_resultado, etiqueta_D, pos_D, 
@@ -191,6 +254,7 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     cv2.line(img_resultado, punto_proyectado, punto_max, (255, 255, 255), 1)
                     
                     # Dibujar punta de flecha
+                    import math
                     arrow_size = 10
                     angle_rad = math.atan2(punto_max[1] - punto_proyectado[1], 
                                           punto_max[0] - punto_proyectado[0])
@@ -204,14 +268,14 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     
                     # Posición para la etiqueta X (cerca del punto medio del vector X)
                     pos_X = (int((punto_proyectado[0] + punto_max[0])/2), 
-                             int((punto_proyectado[1] + punto_max[1])/2))
+                            int((punto_proyectado[1] + punto_max[1])/2))
                     
                     # Agregar fondo negro para mejor visibilidad
                     (text_width, text_height), _ = cv2.getTextSize(etiqueta_X, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                     cv2.rectangle(img_resultado, 
-                                 (pos_X[0] - 5, pos_X[1] - text_height - 5), 
-                                 (pos_X[0] + text_width + 5, pos_X[1] + 5), 
-                                 (0, 0, 0), -1)
+                                (pos_X[0] - 5, pos_X[1] - text_height - 5), 
+                                (pos_X[0] + text_width + 5, pos_X[1] + 5), 
+                                (0, 0, 0), -1)
                     
                     # Dibujar etiqueta X
                     cv2.putText(img_resultado, etiqueta_X, pos_X, 
@@ -223,7 +287,8 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                         'D_px': D,
                         'C_porcentaje': C,
                         'punto_max': punto_max,
-                        'punto_proyectado': punto_proyectado
+                        'punto_proyectado': punto_proyectado,
+                        'indice': indice  # Guardar índice para mapeo
                     }
                     
                     # Formar texto para resumen en la parte superior
@@ -232,9 +297,9 @@ def visualizar_abombamiento_enhanced(image, contorno, contorno_principal):
                     # Añadir fondo negro para mejor visibilidad
                     (text_width, text_height), _ = cv2.getTextSize(texto_lado, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
                     cv2.rectangle(img_resultado, 
-                                 (20, y_offset - text_height - 5), 
-                                 (20 + text_width + 10, y_offset + 5), 
-                                 (0, 0, 0), -1)
+                                (20, y_offset - text_height - 5), 
+                                (20 + text_width + 10, y_offset + 5), 
+                                (0, 0, 0), -1)
                     
                     # Añadir texto con el color correspondiente al lado
                     cv2.putText(img_resultado, texto_lado, (25, y_offset), 

@@ -304,12 +304,12 @@ class AbombamientoProcessor:
             # PASO 3: Recrear la visualización con los resultados ajustados
             if 'resultados_por_lado' in results:
                 try:
-                    # Crear visualización mejorada con los resultados ajustados
+                    # Crear visualización mejorada con los resultados originales sin pasar resultados_ajustados
                     imagen_resultado, _ = visualizar_abombamiento_enhanced(
                         image, 
                         corners, 
-                        contorno_principal,
-                        resultados_ajustados=results['resultados_por_lado']  # Pasar los resultados ajustados
+                        contorno_principal
+                        # Removed problematic parameter: resultados_ajustados=results['resultados_por_lado']
                     )
                     # Actualizar la visualización
                     results['visualization'] = imagen_resultado
