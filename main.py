@@ -16,7 +16,9 @@ from models.defect_detector import DefectDetector
 from common.zone_generator import visualize_zones
 from common.defect_classifier import classify_defects_with_masks, visualize_results_with_masks
 from utils.utils import order_points
-
+import cv2
+import numpy as np
+from utils.utils import draw_arrow
 
 # Importar procesadores de defectos específicos
 from defects.diagonal_crack.processor import DiagonalCrackProcessor
@@ -941,10 +943,6 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
     Returns:
         Imagen original con todos los defectos visualizados
     """
-    import cv2
-    import numpy as np
-    from utils.utils import draw_arrow
-    
     # Crear copia de la imagen original
     result_img = original_image.copy()
     
@@ -954,29 +952,20 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
     
     # Título para la imagen
     title = defect_type.replace('_', ' ').title()
-    if defect_type.startswith('grietas'):
-        # Extraer el tipo de grieta (diagonal, corner, etc.)
-        tipo_grieta = defect_type.replace('grietas_', '').title()
-        title = f"Grietas {tipo_grieta}"
-    
     cv2.putText(result_img, title, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
     cv2.putText(result_img, f"Total: {len(defects)}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     
     # Procesar cada defecto según su tipo específico
     for i, defect in enumerate(processed_results):
-        # Obtener coordenadas del bbox
-        bbox = defects[i]['bbox'] if i < len(defects) else None
-        if bbox is None:
-            continue
-            
+        # Obtener bbox y dibujar rectángulo
+        bbox = defects[i]['bbox']
         x1, y1, x2, y2 = bbox
-        
-        # Dibujar un rectángulo rojo alrededor del defecto
         cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
         
-        # Añadir número de índice del defecto
-        cv2.putText(result_img, f"#{i+1}", (x1, y1-5), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        # Dibujar número de defecto
+        cv2.putText(result_img, f"#{i+1}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # Código específico para cada tipo de defecto...
         
         # Dibujar métricas y vectores según el tipo de defecto
         if defect_type.startswith('grietas'):
@@ -1096,6 +1085,7 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
             cv2.putText(result_img, f"L={L:.1f}px, D={D:.1f}px, Dir={direccion}", 
                       (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
+        # Dentro de la función draw_all_defects_on_original_image, para el caso 'inclusion_no_metalica':
         elif defect_type == 'inclusion_no_metalica':
             # Para inclusiones no metálicas
             num_inclusiones = defect.get('num_inclusiones', 0)
@@ -1129,7 +1119,7 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
                         cv2.circle(result_img, (cx, cy), 3, (0, 0, 255), -1)
                         # Numerar las inclusiones
                         cv2.putText(result_img, str(j+1), (cx+4, cy+4), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
             
             # Dibujar cuadrado de análisis si está disponible
             if 'square' in defect:
@@ -1164,6 +1154,141 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     return result_img
+def overlay_sopladura_visualizations(original_image, processed_results, vertices):
+    """
+    Superpone las visualizaciones específicas de sopladura sobre la imagen original
+    
+    Args:
+        original_image: Imagen original de la palanquilla
+        processed_results: Resultados procesados de sopladuras
+        vertices: Vértices de la palanquilla
+        
+    Returns:
+        Una imagen con las visualizaciones de sopladuras superpuestas
+    """
+    # Crear copia de la imagen original
+    result_img = original_image.copy()
+    
+    # Dibujar contorno de la palanquilla
+    if vertices is not None and len(vertices) == 4:
+        cv2.polylines(result_img, [np.array(vertices)], True, (0, 255, 0), 2)
+    
+    # Título para la imagen
+    cv2.putText(result_img, "Sopladuras", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    
+    # Verificar que existe la información necesaria
+    if 'processed_data' not in processed_results or 'visualizations' not in processed_results:
+        return result_img
+    
+    sopladuras = processed_results['processed_data']
+    visualizations = processed_results['visualizations']
+    
+    # Procesar cada sopladura
+    for i, sopladura in enumerate(sopladuras):
+        # Obtener datos básicos
+        bbox = sopladura.get('bbox', None)
+        if bbox is None:
+            continue
+            
+        x1, y1, x2, y2 = bbox
+        lado = sopladura.get('lado', 'desconocido')
+        L = sopladura.get('L', 0)
+        D = sopladura.get('D', 0)
+        
+        # Buscar la visualización específica para esta sopladura
+        visualization_key = f"sopladura_{lado}"
+        if visualization_key in visualizations:
+            # Obtener la visualización con mapa de calor
+            viz_image = visualizations[visualization_key]
+            
+            # Redimensionar la visualización al tamaño del bounding box
+            viz_resized = cv2.resize(viz_image, (x2-x1, y2-y1))
+            
+            # Crear una máscara para la visualización
+            # Esta máscara nos permite superponer solo la parte relevante
+            # y mantener la transparencia adecuada
+            gray = cv2.cvtColor(viz_resized, cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
+            
+            # Crear una región de interés (ROI) en la imagen original
+            roi = result_img[y1:y2, x1:x2]
+            
+            # Superponer la visualización en la ROI con transparencia
+            # Para cada pixel donde la máscara es no-cero
+            for c in range(0, 3):
+                roi[:, :, c] = np.where(mask > 0, 
+                                        viz_resized[:, :, c] * 0.7 + roi[:, :, c] * 0.3, 
+                                        roi[:, :, c])
+            
+            # Opcional: dibujar un borde alrededor del área de sopladura
+            cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 255, 255), 1)
+        else:
+            # Si no hay visualización específica, dibujar solo el rectángulo
+            cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        
+        # Etiqueta con información sobre la sopladura
+        label = f"#{i+1} {lado}: L={L}px, D={D}px"
+        
+        # Posicionar la etiqueta según el lado para evitar solapamientos
+        text_y = y1 - 10
+        if y1 < 30:  # Si está muy arriba, ponerla abajo
+            text_y = y2 + 20
+        
+        # Añadir un fondo negro para mejor visibilidad del texto
+        text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        cv2.rectangle(result_img, 
+                    (x1, text_y - text_size[1] - 2), 
+                    (x1 + text_size[0], text_y + 2), 
+                    (0, 0, 0), -1)
+        
+        # Dibujar la etiqueta
+        cv2.putText(result_img, label, (x1, text_y), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    # Información general sobre el número de sopladuras
+    cv2.putText(result_img, f"Total: {len(sopladuras)} (una por lado)", (20, 60), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    
+    return result_img
+def overlay_analysis_on_image(original_image, analysis_image, alpha=0.7):
+    """
+    Superpone una imagen de análisis (con fondo negro) sobre la imagen original
+    
+    Args:
+        original_image: Imagen original de la palanquilla
+        analysis_image: Imagen de análisis (con fondo negro y elementos gráficos)
+        alpha: Factor de transparencia para la superposición (0-1)
+        
+    Returns:
+        Una imagen con el análisis superpuesto sobre la original
+    """
+    # Verificar que ambas imágenes existen
+    if original_image is None or analysis_image is None:
+        return original_image if original_image is not None else analysis_image
+    
+    # Redimensionar la imagen de análisis para que coincida con la original
+    analysis_resized = cv2.resize(analysis_image, (original_image.shape[1], original_image.shape[0]))
+    
+    # Crear una máscara para los elementos no negros en la imagen de análisis
+    # Esto nos permite superponer solo los elementos importantes (líneas, círculos, etc.)
+    # y no el fondo negro
+    gray = cv2.cvtColor(analysis_resized, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
+    
+    # Crear imagen resultado que comienza como una copia de la original
+    result = original_image.copy()
+    
+    # Para cada pixel donde la máscara es blanca (elementos gráficos en la imagen de análisis)
+    # mezclamos los colores de la imagen original y la de análisis según el factor alpha
+    mask_3channel = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR) / 255.0
+    result = cv2.addWeighted(result, 1.0, analysis_resized, alpha, 0)
+    
+    # Donde la máscara es negra (fondo negro en la imagen de análisis)
+    # mantenemos el color original sin cambios
+    inverted_mask = 1.0 - mask_3channel
+    result = result * mask_3channel + original_image * inverted_mask
+    
+    return result.astype(np.uint8)
 def output_fn(prediction_results, output_dir, input_data):
     """
     Guarda los resultados del análisis con visualizaciones mejoradas:
@@ -1252,7 +1377,6 @@ def output_fn(prediction_results, output_dir, input_data):
     # Procesar cada tipo de defecto
     classified_detections = prediction_results['classified_detections']
     processed_results = prediction_results.get('processed_results', {})
-    
     for defect_type, defects in classified_detections.items():
         if not defects:  # Saltar si no hay defectos de este tipo
             continue
@@ -1261,75 +1385,48 @@ def output_fn(prediction_results, output_dir, input_data):
         defect_dir = os.path.join(image_output_dir, defect_type)
         os.makedirs(defect_dir, exist_ok=True)
         
-        # NUEVA VISUALIZACIÓN MEJORADA: Dibujar todos los defectos en la imagen original
-        # Sólo para tipos específicos que no sean romboidad o abombamiento (que ya están bien)
-        if defect_type not in ['romboidad', 'abombamiento']:
-            # Obtener los resultados procesados para este tipo
-            processed_data = []
-            if defect_type in processed_results:
-                processed_data = processed_results[defect_type].get('processed_data', [])
-                
-                # Asegurar que processed_data sea una lista para iterar
-                if not isinstance(processed_data, list):
-                    processed_data = [processed_data]
-            
-            # Generar la visualización mejorada
-            enhanced_img = draw_all_defects_on_original_image(
-                processed_image,  # Usar la imagen procesada como base
-                defects,
-                processed_data,
-                defect_type,
+        # Tratamiento especial para sopladuras
+        if defect_type == 'sopladura' and defect_type in processed_results:
+            # Generar visualización específica para sopladuras
+            sopladura_img = overlay_sopladura_visualizations(
+                processed_image,
+                processed_results[defect_type],
                 vertices
             )
             
-            # Guardar la visualización mejorada
-            enhanced_path = os.path.join(defect_dir, f"{name}_{defect_type}_enhanced{ext}")
-            cv2.imwrite(enhanced_path, enhanced_img)
-            output_paths[f'{defect_type}_enhanced'] = enhanced_path
-        
-        # Guardar también los reportes originales para mantener compatibilidad
-        if defect_type in processed_results:
-            # Guardar el JSON con los datos procesados
-            if 'processed_data' in processed_results[defect_type]:
-                # Obtener datos procesados
-                processed_data = processed_results[defect_type]['processed_data']
-                
-                # Convertir a formato JSON serializable
-                if isinstance(processed_data, list):
-                    # Filtrar propiedades no serializables
-                    serializable_data = []
-                    for item in processed_data:
-                        if isinstance(item, dict):
-                            clean_item = {k: v for k, v in item.items() if k not in 
-                                        ['mask', 'local_visualization', 'global_visualization', 
-                                         'local_pt1', 'local_pt2', 'global_pt1', 'global_pt2',
-                                         'contour_point', 'edge_point', 'punto_max', 'proyeccion',
-                                         'rect', 'box', 'contours']}
-                            serializable_data.append(clean_item)
-                    processed_data = serializable_data
-                else:
-                    # Si es un único objeto
-                    processed_data = {k: v for k, v in processed_data.items() if k not in 
-                                     ['resultados_por_lado', 'visualization', 'punto_max', 
-                                      'proyeccion', 'global_visualization', 'local_visualization']}
-                
-                # Guardar como JSON
-                json_path = os.path.join(defect_dir, f"{name}_{defect_type}.json")
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(processed_data, f, ensure_ascii=False, indent=4, 
-                            default=lambda x: float(x) if isinstance(x, np.floating) else 
-                                            int(x) if isinstance(x, np.integer) else str(x))
-
-                output_paths[f'{defect_type}_json'] = json_path
+            # Guardar la visualización
+            sopladura_path = os.path.join(defect_dir, f"{name}_sopladura_visualizacion{ext}")
+            cv2.imwrite(sopladura_path, sopladura_img)
+            output_paths['sopladura_visualizacion'] = sopladura_path
             
-            # Guardar las visualizaciones originales específicas para referencia
-            if 'visualizations' in processed_results[defect_type]:
-                for viz_name, viz_img in processed_results[defect_type]['visualizations'].items():
-                    viz_path = os.path.join(defect_dir, f"{name}_{defect_type}_{viz_name}{ext}")
-                    try:
-                        cv2.imwrite(viz_path, viz_img)
-                    except Exception as e:
-                        print(f"Error al guardar visualización {viz_name}: {e}")
+            # También guardar las visualizaciones individuales para referencia
+            
+    # Dentro de output_fn:
+    for defect_type, defects in classified_detections.items():
+        if not defects:  # Saltar si no hay defectos de este tipo
+            continue
+            
+        # Crear directorio para este tipo de defecto si no existe
+        defect_dir = os.path.join(image_output_dir, defect_type)
+        os.makedirs(defect_dir, exist_ok=True)
+        
+        # Buscar visualizaciones globales para este tipo de defecto
+        if defect_type in processed_results and 'visualizations' in processed_results[defect_type]:
+            visualizations = processed_results[defect_type]['visualizations']
+            
+            # Buscar visualizaciones globales
+            global_viz_keys = [key for key in visualizations.keys() if 'global' in key]
+            
+            for key in global_viz_keys:
+                analysis_image = visualizations[key]
+                
+                # Superponer el análisis sobre la imagen original
+                overlaid_image = overlay_analysis_on_image(processed_image, analysis_image)
+                
+                # Guardar la visualización superpuesta
+                overlaid_path = os.path.join(defect_dir, f"{name}_{defect_type}_{key}_superpuesto{ext}")
+                cv2.imwrite(overlaid_path, overlaid_image)
+                output_paths[f'{defect_type}_{key}_overlaid'] = overlaid_path
     
     return output_paths
 
