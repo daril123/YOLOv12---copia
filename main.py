@@ -927,12 +927,248 @@ def predict_fn(input_data, models, output_dir=None):
         'rotacion_info': rotacion_info,
         'original_image': original_image
     }
-
+def draw_all_defects_on_original_image(original_image, defects, processed_results, defect_type, corners):
+    """
+    Dibuja todos los defectos del mismo tipo en la imagen original con sus análisis
+    
+    Args:
+        original_image: Imagen original donde dibujar los defectos
+        defects: Lista de defectos del mismo tipo
+        processed_results: Resultados procesados con métricas
+        defect_type: Tipo de defecto
+        corners: Esquinas de la palanquilla
+        
+    Returns:
+        Imagen original con todos los defectos visualizados
+    """
+    import cv2
+    import numpy as np
+    from utils.utils import draw_arrow
+    
+    # Crear copia de la imagen original
+    result_img = original_image.copy()
+    
+    # Dibujar el contorno verde de la palanquilla
+    if corners is not None and len(corners) == 4:
+        cv2.polylines(result_img, [np.array(corners)], True, (0, 255, 0), 2)
+    
+    # Título para la imagen
+    title = defect_type.replace('_', ' ').title()
+    if defect_type.startswith('grietas'):
+        # Extraer el tipo de grieta (diagonal, corner, etc.)
+        tipo_grieta = defect_type.replace('grietas_', '').title()
+        title = f"Grietas {tipo_grieta}"
+    
+    cv2.putText(result_img, title, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.putText(result_img, f"Total: {len(defects)}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    
+    # Procesar cada defecto según su tipo específico
+    for i, defect in enumerate(processed_results):
+        # Obtener coordenadas del bbox
+        bbox = defects[i]['bbox'] if i < len(defects) else None
+        if bbox is None:
+            continue
+            
+        x1, y1, x2, y2 = bbox
+        
+        # Dibujar un rectángulo rojo alrededor del defecto
+        cv2.rectangle(result_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        
+        # Añadir número de índice del defecto
+        cv2.putText(result_img, f"#{i+1}", (x1, y1-5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        # Dibujar métricas y vectores según el tipo de defecto
+        if defect_type.startswith('grietas'):
+            # Para grietas (diagonales, corner, medio_camino)
+            L = defect.get('L', 0)
+            e = defect.get('e', 0)
+            D = defect.get('D', 0)
+            
+            # Dibujar puntos extremos y vector para longitud L
+            if 'global_pt1' in defect and 'global_pt2' in defect:
+                global_pt1 = defect['global_pt1']
+                global_pt2 = defect['global_pt2']
+                
+                if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
+                    # Convertir a enteros si no lo son
+                    global_pt1 = (int(global_pt1[0]), int(global_pt1[1]))
+                    global_pt2 = (int(global_pt2[0]), int(global_pt2[1]))
+                    
+                    # Dibujar puntos extremos en azul
+                    cv2.circle(result_img, global_pt1, 5, (255, 0, 0), -1)
+                    cv2.circle(result_img, global_pt2, 5, (255, 0, 0), -1)
+                    
+                    # Dibujar flecha L (amarilla) entre puntos extremos
+                    draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"L={L:.1f}px")
+            
+            # Dibujar puntos y vector para distancia D
+            if 'contour_point' in defect and 'edge_point' in defect:
+                contour_point = defect['contour_point']
+                edge_point = defect['edge_point']
+                
+                if isinstance(contour_point, tuple) and isinstance(edge_point, tuple):
+                    # Convertir a enteros si no lo son
+                    contour_point = (int(contour_point[0]), int(contour_point[1]))
+                    edge_point = (int(edge_point[0]), int(edge_point[1]))
+                    
+                    # Dibujar punto del contorno en rojo
+                    cv2.circle(result_img, contour_point, 5, (0, 0, 255), -1)
+                    
+                    # Dibujar punto del borde en amarillo
+                    cv2.circle(result_img, edge_point, 5, (255, 255, 0), -1)
+                    
+                    # Dibujar flecha D (naranja) desde el punto del contorno hasta el borde
+                    draw_arrow(result_img, contour_point, edge_point, (0, 165, 255), 2, 10, f"D={D:.1f}px")
+            
+            # Información adicional en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"L={L:.1f}px, e={e:.1f}px, D={D:.1f}px", 
+                      (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        elif defect_type == 'estrella' or defect_type == 'rechupe':
+            # Para estrellas y rechupes
+            diametro = defect.get('diametro', 0)
+            
+            # Dibujar puntos extremos y vector para diámetro
+            if 'global_pt1' in defect and 'global_pt2' in defect:
+                global_pt1 = defect['global_pt1']
+                global_pt2 = defect['global_pt2']
+                
+                if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
+                    # Convertir a enteros si no lo son
+                    global_pt1 = (int(global_pt1[0]), int(global_pt1[1]))
+                    global_pt2 = (int(global_pt2[0]), int(global_pt2[1]))
+                    
+                    # Dibujar puntos extremos en azul
+                    cv2.circle(result_img, global_pt1, 5, (255, 0, 0), -1)
+                    cv2.circle(result_img, global_pt2, 5, (255, 0, 0), -1)
+                    
+                    # Dibujar flecha para diámetro
+                    draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px")
+            
+            # Información adicional en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"Diámetro={diametro:.1f}px", 
+                      (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        elif defect_type == 'nucleo_esponjoso':
+            # Para núcleos esponjosos
+            diametro = defect.get('diametro', 0)
+            area = defect.get('area_nucleo', 0)
+            porcentaje = defect.get('porcentaje_area', 0)
+            
+            # Dibujar puntos extremos y vector para diámetro
+            if 'global_pt1' in defect and 'global_pt2' in defect:
+                global_pt1 = defect['global_pt1']
+                global_pt2 = defect['global_pt2']
+                
+                if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
+                    # Convertir a enteros si no lo son
+                    global_pt1 = (int(global_pt1[0]), int(global_pt1[1]))
+                    global_pt2 = (int(global_pt2[0]), int(global_pt2[1]))
+                    
+                    # Dibujar puntos extremos en azul
+                    cv2.circle(result_img, global_pt1, 5, (255, 0, 0), -1)
+                    cv2.circle(result_img, global_pt2, 5, (255, 0, 0), -1)
+                    
+                    # Dibujar flecha para diámetro
+                    draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px")
+            
+            # Información adicional en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"Diam={diametro:.1f}px, Área={area:.0f}px², %={porcentaje:.2f}%", 
+                      (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        elif defect_type == 'sopladura':
+            # Para sopladuras
+            L = defect.get('L', 0)
+            D = defect.get('D', 0)
+            area = defect.get('area', 0)
+            direccion = defect.get('direccion', '')
+            
+            # Dibujar información en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"L={L:.1f}px, D={D:.1f}px, Dir={direccion}", 
+                      (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        elif defect_type == 'inclusion_no_metalica':
+            # Para inclusiones no metálicas
+            num_inclusiones = defect.get('num_inclusiones', 0)
+            area = defect.get('area_interseccion', 0)
+            concentracion = defect.get('metrica_C', 0)
+            
+            # Si hay contornos de inclusiones disponibles, mostrarlos en la imagen
+            if 'contours' in defect and defect['contours'] is not None:
+                contours = defect['contours']
+                
+                # Ajustar las coordenadas de los contornos al ROI
+                adjusted_contours = []
+                for contour in contours:
+                    adjusted_contour = contour.copy()
+                    adjusted_contour[:,:,0] += x1
+                    adjusted_contour[:,:,1] += y1
+                    adjusted_contours.append(adjusted_contour)
+                
+                # Dibujar contornos y centros de inclusiones
+                for j, contour in enumerate(adjusted_contours):
+                    # Dibujar contorno en verde
+                    cv2.drawContours(result_img, [contour], 0, (0, 255, 0), 1)
+                    
+                    # Calcular centro del contorno
+                    M = cv2.moments(contour)
+                    if M["m00"] > 0:
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+                        
+                        # Dibujar punto rojo en el centro
+                        cv2.circle(result_img, (cx, cy), 3, (0, 0, 255), -1)
+                        # Numerar las inclusiones
+                        cv2.putText(result_img, str(j+1), (cx+4, cy+4), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            
+            # Dibujar cuadrado de análisis si está disponible
+            if 'square' in defect:
+                sq_x1, sq_y1, sq_x2, sq_y2 = defect['square']
+                # Ajustar al ROI
+                sq_x1 += x1
+                sq_y1 += y1
+                sq_x2 += x1
+                sq_y2 += y1
+                cv2.rectangle(result_img, (sq_x1, sq_y1), (sq_x2, sq_y2), (0, 255, 0), 2)
+            
+            # Información adicional en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"Incl.={num_inclusiones}, Área={area:.0f}px², C={concentracion:.6f}", 
+                      (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        elif defect_type == 'etiqueta':
+            # Para etiquetas con OCR
+            code = defect.get('code', 'UNKNOWN')
+            quality = defect.get('quality', 'UNKNOWN')
+            line = defect.get('line', 'UNKNOWN')
+            
+            # Información OCR en cuadro de texto
+            text_x = x1
+            text_y = y2 + 20
+            cv2.putText(result_img, f"Code: {code}", (text_x, text_y), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(result_img, f"Quality: {quality}", (text_x, text_y+20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(result_img, f"Line: {line}", (text_x, text_y+40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    return result_img
 def output_fn(prediction_results, output_dir, input_data):
     """
-    Guarda los resultados del análisis con visualizaciones simplificadas:
-    - Solo dos imágenes en el directorio principal (rotación y resultado)
-    - Una imagen consolidada por tipo de defecto en sus respectivas carpetas
+    Guarda los resultados del análisis con visualizaciones mejoradas:
+    - Una imagen consolidada por tipo de defecto que muestra los análisis sobre la imagen original
+    - Reportes completos con todas las métricas
     
     Args:
         prediction_results: Resultados del análisis
@@ -942,18 +1178,25 @@ def output_fn(prediction_results, output_dir, input_data):
     Returns:
         Dictionary con las rutas donde se guardaron los resultados
     """
-    # Importar función para escribir archivos con codificación UTF-8
     from utils.utils import safe_write_file, draw_arrow
     import json
-    import math
+    import cv2
+    import numpy as np
+    import os
+    from pathlib import Path
+    
+    # Importar la función para dibujar defectos en la imagen original
+    
     
     # Extraer información básica
     name = input_data['name']
     ext = input_data['ext']
     
-    # Usar la imagen procesada como base
-    processed_image = prediction_results['image_procesada']
-    vertices = prediction_results['vertices']
+    # Obtener datos clave para el procesamiento
+    original_image = prediction_results.get('original_image', None)
+    processed_image = prediction_results.get('image_procesada', original_image)
+    vertices = prediction_results.get('vertices', None)
+    classified_detections = prediction_results.get('classified_detections', {})
     
     # Crear carpeta principal para esta imagen
     image_output_dir = os.path.join(output_dir, name)
@@ -963,7 +1206,7 @@ def output_fn(prediction_results, output_dir, input_data):
     
     # SIMPLIFICADO: Guardar SOLO 2 imágenes en el directorio exterior
     
-    # 1. Guardar la comparación antes y después de la rotación
+    # 1. Guardar la comparación antes y después de la rotación si hay rotación
     if 'rotacion_info' in prediction_results and prediction_results['rotacion_info']['angulo'] != 0:
         # Get original and rotated images
         original_image = prediction_results['original_image']
@@ -994,7 +1237,8 @@ def output_fn(prediction_results, output_dir, input_data):
         cv2.imwrite(comp_path, comparison)
         output_paths['rotacion_comparacion'] = comp_path
     
-    # 2. Guardar imagen con todos los defectos detectados
+    # 2. Guardar imagen con todos los defectos detectados (usando la visualización original para mantener compatibilidad)
+    from common.defect_classifier import visualize_results_with_masks
     result_image = visualize_results_with_masks(
         prediction_results['image_procesada'], 
         prediction_results['classified_detections']
@@ -1003,459 +1247,89 @@ def output_fn(prediction_results, output_dir, input_data):
     cv2.imwrite(result_path, result_image)
     output_paths['result_img'] = result_path
     
-    # IMPORTANTE: NO GUARDAR NINGUNA OTRA IMAGEN EN EL DIRECTORIO PRINCIPAL
-    # Eliminar líneas que guardaban otros archivos como:
-    # - palanquilla_mask
-    # - vertices_original
-    # - vertices_rotados
-    # - mascara_original
-    # - mascara_rotada
-
-    # MODIFICADO: Para cada tipo de defecto, dibujar métricas, vectores y puntos
+    # NUEVA FUNCIONALIDAD: Crear visualizaciones mejoradas para cada tipo de defecto
+    
+    # Procesar cada tipo de defecto
     classified_detections = prediction_results['classified_detections']
-
-    # Función que dibuja TODOS los defectos del mismo tipo en una única imagen
-    def draw_segmented_defects_on_image(final_image, defects, processed_result, defect_type):
-        """
-        Dibuja los defectos segmentados directamente sobre la imagen original,
-        resaltando las máscaras y mostrando las mediciones superpuestas.
+    processed_results = prediction_results.get('processed_results', {})
+    
+    for defect_type, defects in classified_detections.items():
+        if not defects:  # Saltar si no hay defectos de este tipo
+            continue
+            
+        # Crear directorio para este tipo de defecto si no existe
+        defect_dir = os.path.join(image_output_dir, defect_type)
+        os.makedirs(defect_dir, exist_ok=True)
         
-        Args:
-            final_image: Imagen original
-            defects: Lista de defectos del mismo tipo
-            processed_result: Resultados procesados con métricas
-            defect_type: Tipo de defecto
-            
-        Returns:
-            Imagen con las máscaras y mediciones de defectos superpuestas
-        """
-        # Crear copia de la imagen final
-        result_img = final_image.copy()
-        
-        # Dibujar el contorno verde de la palanquilla si está disponible
-        if 'vertices' in globals():
-            cv2.polylines(result_img, [np.array(vertices)], True, (0, 255, 0), 2)
-        
-        # Título para la imagen
-        title = defect_type.replace('_', ' ').title()
-        if defect_type.startswith('grietas'):
-            # Extraer el tipo de grieta (diagonal, corner, etc.)
-            tipo_grieta = defect_type.replace('grietas_', '').title()
-            title = f"Grietas {tipo_grieta}"
-        
-        # Agregar título
-        cv2.putText(result_img, title, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-        cv2.putText(result_img, f"Total: {len(defects)}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        
-        # Colores para diferentes tipos de defectos
-        color_map = {
-            'grietas_diagonales': (0, 0, 255),    # Rojo
-            'grietas_medio_camino': (0, 255, 255), # Amarillo
-            'grietas_corner': (255, 0, 0),        # Azul
-            'nucleo_esponjoso': (0, 255, 0),      # Verde
-            'inclusion_no_metalica': (255, 0, 255), # Magenta
-            'estrella': (255, 255, 0),            # Cian
-            'rechupe': (128, 0, 128),             # Púrpura
-            'sopladura': (0, 165, 255)            # Naranja
-        }
-        
-        # Color predeterminado si no está en el mapa
-        color = color_map.get(defect_type, (255, 255, 255))
-        
-        # Procesar cada defecto
-        for i, defect in enumerate(defects):
-            # Obtener coordenadas del bbox
-            x1, y1, x2, y2 = defect['bbox']
-            conf = defect.get('conf', 0)
-            
-            # Extraer la máscara del defecto
-            mask = defect.get('mask', None)
-            
-            # Si no tenemos la máscara, pero tenemos resultados procesados con esa información
-            if mask is None and i < len(processed_result) and 'mask' in processed_result[i]:
-                mask = processed_result[i]['mask']
-            
-            # Si todavía no tenemos máscara, intentar crear una aproximada
-            if mask is None:
-                # Crear una máscara en blanco del tamaño de la imagen
-                mask = np.zeros((final_image.shape[0], final_image.shape[1]), dtype=np.uint8)
-                
-                # Si tenemos información de contorno, dibujar el contorno
-                if i < len(processed_result) and 'contours' in processed_result[i]:
-                    contours = processed_result[i]['contours']
-                    cv2.drawContours(mask, contours, -1, 255, -1)
-                else:
-                    # Si no hay contorno, usar un rectángulo simple
-                    cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
-            
-            # Crear una capa para superponer el defecto con transparencia
-            overlay = result_img.copy()
-            
-            # Encontrar contornos en la máscara para dibujar bordes
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Dibujar contornos de la máscara con color sólido
-            cv2.drawContours(overlay, contours, -1, color, 2)
-            
-            # Rellenar el área con color semitransparente
-            for contour in contours:
-                cv2.fillPoly(overlay, [contour], (*color, 128))  # Color con alpha
-            
-            # Aplicar la capa con transparencia
-            alpha = 0.4  # Nivel de transparencia
-            cv2.addWeighted(overlay, alpha, result_img, 1 - alpha, 0, result_img)
-            
-            # Añadir número de índice del defecto
-            cv2.putText(result_img, f"#{i+1}", (x1, y1-5), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # Obtener métricas específicas según el tipo de defecto
-            if i < len(processed_result):
-                metrics = processed_result[i]
-                
-                # Coordenadas para mostrar mediciones (junto al defecto)
-                text_x = x2 + 10
-                text_y = y1 + 20
-                
-                # Agregar un fondo oscuro semi-transparente para texto
-                overlay_text = result_img.copy()
-                text_bg_width = 200
-                text_bg_height = 80
-                cv2.rectangle(overlay_text, 
-                            (text_x-5, text_y-20), 
-                            (text_x+text_bg_width, text_y+text_bg_height), 
-                            (0, 0, 0), -1)
-                cv2.addWeighted(overlay_text, 0.7, result_img, 0.3, 0, result_img)
-                
-                # Mostrar métricas según el tipo de defecto
-                if defect_type.startswith('grietas'):
-                    # Métricas para grietas
-                    L = metrics.get('L', 0)
-                    e = metrics.get('e', 0)
-                    D = metrics.get('D', 0)
-                    angulo = defect.get('angulo', 0)
-                    direccion = defect.get('direccion', 'indeterminada')
-                    
-                    # Mostrar valores
-                    cv2.putText(result_img, f"L={L:.1f}px", (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.putText(result_img, f"e={e:.1f}px", (text_x, text_y+25), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
-                    cv2.putText(result_img, f"D={D:.1f}px", (text_x, text_y+50), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-                    cv2.putText(result_img, f"Dir: {direccion}", (text_x, text_y+75), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    
-                    # Dibujar flechas para visualizar L y D si tenemos puntos
-                    if 'global_pt1' in metrics and 'global_pt2' in metrics:
-                        global_pt1 = metrics['global_pt1']
-                        global_pt2 = metrics['global_pt2']
-                        if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
-                            draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"L={L:.1f}px")
-                    
-                    if 'contour_point' in metrics and 'edge_point' in metrics:
-                        contour_point = metrics['contour_point']
-                        edge_point = metrics['edge_point']
-                        if isinstance(contour_point, tuple) and isinstance(edge_point, tuple):
-                            draw_arrow(result_img, contour_point, edge_point, (0, 165, 255), 2, 10, f"D={D:.1f}px")
-                
-                elif defect_type == 'nucleo_esponjoso':
-                    # Métricas para núcleos esponjosos
-                    diametro = metrics.get('diametro', 0)
-                    area = metrics.get('area_nucleo', 0)
-                    porcentaje = metrics.get('porcentaje_area', 0)
-                    
-                    # Mostrar valores
-                    cv2.putText(result_img, f"Área: {area:.0f} px²", (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    cv2.putText(result_img, f"Longitud: {diametro:.1f} px", (text_x, text_y+25), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.putText(result_img, f"% Área: {porcentaje:.2f}%", (text_x, text_y+50), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-                    
-                    # Dibujar línea de diámetro si tenemos puntos
-                    if 'global_pt1' in metrics and 'global_pt2' in metrics:
-                        global_pt1 = metrics['global_pt1']
-                        global_pt2 = metrics['global_pt2']
-                        if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
-                            draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px")
-                
-                elif defect_type in ['estrella', 'rechupe']:
-                    # Métricas para estrellas y rechupes
-                    diametro = metrics.get('diametro', 0)
-                    
-                    # Mostrar valor del diámetro
-                    cv2.putText(result_img, f"D={diametro:.1f}px", (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    
-                    # Dibujar línea de diámetro si tenemos puntos
-                    if 'global_pt1' in metrics and 'global_pt2' in metrics:
-                        global_pt1 = metrics['global_pt1']
-                        global_pt2 = metrics['global_pt2']
-                        if isinstance(global_pt1, tuple) and isinstance(global_pt2, tuple):
-                            draw_arrow(result_img, global_pt1, global_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px")
-                
-                elif defect_type == 'inclusion_no_metalica':
-                    # Métricas para inclusiones no metálicas
-                    num = metrics.get('num_inclusiones', 0)
-                    area = metrics.get('area_interseccion', 0)
-                    concentracion = metrics.get('metrica_C', 0)
-                    
-                    # Mostrar valores
-                    cv2.putText(result_img, f"Núm: {num}", (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    cv2.putText(result_img, f"Área: {area:.0f} px²", (text_x, text_y+25), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.putText(result_img, f"Conc: {concentracion:.6f}", (text_x, text_y+50), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-                    
-                    # Dibujar centroides de inclusiones si están disponibles
-                    if 'contours' in metrics and metrics['contours'] is not None:
-                        for j, cnt in enumerate(metrics['contours']):
-                            # Ajustar coordenadas al sistema global
-                            cnt_shifted = cnt.copy()
-                            cnt_shifted[:,:,0] += x1
-                            cnt_shifted[:,:,1] += y1
-                            
-                            # Encontrar centro
-                            M = cv2.moments(cnt_shifted)
-                            if M["m00"] > 0:
-                                cx = int(M["m10"] / M["m00"])
-                                cy = int(M["m01"] / M["m00"])
-                                
-                                # Dibujar círculo en el centro
-                                cv2.circle(result_img, (cx, cy), 5, (0, 0, 255), -1)
-                                cv2.putText(result_img, str(j+1), (cx+5, cy+5), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                elif defect_type == 'sopladura':
-                    # Métricas para sopladuras
-                    L = metrics.get('L', 0)
-                    D = metrics.get('D', 0)
-                    area = metrics.get('area', 0)
-                    direccion = metrics.get('direccion', '')
-                    
-                    # Mostrar valores (SIMILAR A LA IMAGEN 2 QUE COMPARTISTE)
-                    cv2.putText(result_img, f"Área: {area:.2f} px²", (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                    cv2.putText(result_img, f"Longitud: {L:.1f} px", (text_x, text_y+25), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                    cv2.putText(result_img, f"Dist al borde: {D:.1f} px", (text_x, text_y+50), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                    
-                    # Dibujar puntos de medición si están disponibles
-                    if 'punto_max' in metrics and 'punto_proyectado' in metrics:
-                        max_pt = metrics['punto_max']
-                        proj_pt = metrics['punto_proyectado']
-                        
-                        # Ajustar coordenadas al sistema global
-                        max_pt = (max_pt[0] + x1, max_pt[1] + y1)
-                        proj_pt = (proj_pt[0] + x1, proj_pt[1] + y1)
-                        
-                        # Dibujar línea entre puntos
-                        cv2.line(result_img, max_pt, proj_pt, (255, 255, 255), 2)
-                        
-                        # Dibujar flecha para D
-                        draw_arrow(result_img, max_pt, proj_pt, (0, 165, 255), 2, 10, f"D={D:.1f}px")
-        
-        return result_img
-
-    # Modificar la parte donde se genera la imagen consolidada en output_fn:
-
-    def generate_consolidated_images(prediction_results, output_dir, image_name):
-        """
-        Genera imágenes consolidadas para cada tipo de defecto.
-        
-        Args:
-            prediction_results: Resultados del análisis
-            output_dir: Directorio de salida
-            image_name: Nombre de la imagen
-            
-        Returns:
-            Dictionary con las rutas de las imágenes generadas
-        """
-        output_paths = {}
-        classified_detections = prediction_results['classified_detections']
-        processed_results = prediction_results['processed_results']
-        image = prediction_results['image_procesada']
-        
-        # Crear directorio específico para esta imagen
-        image_dir = os.path.join(output_dir, image_name)
-        os.makedirs(image_dir, exist_ok=True)
-        
-        # Procesar cada tipo de defecto
-        for defect_type, defects in classified_detections.items():
-            if defects and defect_type in processed_results:
-                # Obtener resultados procesados para este tipo
+        # NUEVA VISUALIZACIÓN MEJORADA: Dibujar todos los defectos en la imagen original
+        # Sólo para tipos específicos que no sean romboidad o abombamiento (que ya están bien)
+        if defect_type not in ['romboidad', 'abombamiento']:
+            # Obtener los resultados procesados para este tipo
+            processed_data = []
+            if defect_type in processed_results:
                 processed_data = processed_results[defect_type].get('processed_data', [])
                 
-                # Crear una imagen consolidada con máscaras segmentadas y mediciones
-                consolidated_img = draw_segmented_defects_on_image(
-                    image,
-                    defects,
-                    processed_data,
-                    defect_type
-                )
-                
-                # Guardar la imagen
-                defect_dir = os.path.join(image_dir, defect_type)
-                os.makedirs(defect_dir, exist_ok=True)
-                
-                output_path = os.path.join(defect_dir, f"{image_name}_{defect_type}_segmentacion.jpg")
-                cv2.imwrite(output_path, consolidated_img)
-                
-                output_paths[f"{defect_type}_consolidated"] = output_path
+                # Asegurar que processed_data sea una lista para iterar
+                if not isinstance(processed_data, list):
+                    processed_data = [processed_data]
+            
+            # Generar la visualización mejorada
+            enhanced_img = draw_all_defects_on_original_image(
+                processed_image,  # Usar la imagen procesada como base
+                defects,
+                processed_data,
+                defect_type,
+                vertices
+            )
+            
+            # Guardar la visualización mejorada
+            enhanced_path = os.path.join(defect_dir, f"{name}_{defect_type}_enhanced{ext}")
+            cv2.imwrite(enhanced_path, enhanced_img)
+            output_paths[f'{defect_type}_enhanced'] = enhanced_path
         
-        return output_paths
-
-    # Procesar cada tipo de defecto
-    for defect_type, defects in classified_detections.items():
-        if defects and defect_type in prediction_results['processed_results']:
-            # Crear directorio para este tipo de defecto
-            defect_dir = os.path.join(image_output_dir, defect_type)
-            os.makedirs(defect_dir, exist_ok=True)
-            
-            # Obtener resultados procesados para este tipo de defecto
-            processed_results = prediction_results['processed_results'][defect_type]
-            
-            # Guardar datos en formato JSON (solo los datos procesados, sin visualizaciones)
-            if 'processed_data' in processed_results:
-                # Asegurarse de que los datos sean serializables
-                processed_data = processed_results['processed_data']
+        # Guardar también los reportes originales para mantener compatibilidad
+        if defect_type in processed_results:
+            # Guardar el JSON con los datos procesados
+            if 'processed_data' in processed_results[defect_type]:
+                # Obtener datos procesados
+                processed_data = processed_results[defect_type]['processed_data']
                 
-                # Limpiar datos complejos que no pueden convertirse a JSON
+                # Convertir a formato JSON serializable
                 if isinstance(processed_data, list):
-                    # Si es una lista de defectos
+                    # Filtrar propiedades no serializables
                     serializable_data = []
                     for item in processed_data:
                         if isinstance(item, dict):
-                            # Filtrar elementos no serializables
                             clean_item = {k: v for k, v in item.items() if k not in 
-                                         ['mask', 'local_visualization', 'global_visualization', 
-                                          'local_pt1', 'local_pt2', 'global_pt1', 'global_pt2',
-                                          'contour_point', 'edge_point', 'punto_max', 'proyeccion',
-                                          'rect', 'box', 'contours']}
+                                        ['mask', 'local_visualization', 'global_visualization', 
+                                         'local_pt1', 'local_pt2', 'global_pt1', 'global_pt2',
+                                         'contour_point', 'edge_point', 'punto_max', 'proyeccion',
+                                         'rect', 'box', 'contours']}
                             serializable_data.append(clean_item)
+                    processed_data = serializable_data
                 else:
                     # Si es un único objeto
-                    serializable_data = {k: v for k, v in processed_data.items() if k not in 
-                                        ['resultados_por_lado', 'visualization', 'punto_max', 
-                                         'proyeccion', 'global_visualization', 'local_visualization']}
-                    
-                    # Procesar resultados_por_lado específicamente (para abombamiento)
-                    if 'resultados_por_lado' in processed_data:
-                        serializable_data['resultados_por_lado'] = {}
-                        for lado, datos in processed_data['resultados_por_lado'].items():
-                            serializable_data['resultados_por_lado'][lado] = {
-                                k: v for k, v in datos.items() if not isinstance(v, np.ndarray) and 
-                                                                k not in ['punto_max', 'punto_proyectado']
-                            }
+                    processed_data = {k: v for k, v in processed_data.items() if k not in 
+                                     ['resultados_por_lado', 'visualization', 'punto_max', 
+                                      'proyeccion', 'global_visualization', 'local_visualization']}
                 
                 # Guardar como JSON
                 json_path = os.path.join(defect_dir, f"{name}_{defect_type}.json")
                 with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(serializable_data, f, ensure_ascii=False, indent=4, 
+                    json.dump(processed_data, f, ensure_ascii=False, indent=4, 
                             default=lambda x: float(x) if isinstance(x, np.floating) else 
                                             int(x) if isinstance(x, np.integer) else str(x))
 
                 output_paths[f'{defect_type}_json'] = json_path
             
-            # MODIFICADO: Dibujar TODOS los defectos del mismo tipo en UNA ÚNICA imagen consolidada
-            if defect_type not in ['abombamiento', 'romboidad', 'etiqueta']:
-                if defects:  # Solo procesar si hay defectos de este tipo
-                    # Dibujar todos los defectos de este tipo en una única imagen consolidada
-                    consolidated_img = draw_all_defects_on_single_image(
-                        processed_image, 
-                        defects, 
-                        processed_results.get('processed_data', []), 
-                        defect_type
-                    )
-                    
-                    # Guardar la imagen consolidada (SOLO UNA por carpeta)
-                    consolidated_path = os.path.join(defect_dir, f"{name}_{defect_type}{ext}")
-                    cv2.imwrite(consolidated_path, consolidated_img)
-                    
-                    output_paths[f'{defect_type}_consolidated_image'] = consolidated_path
-            
-            elif defect_type in ['abombamiento', 'romboidad']:
-                # Para propiedades generales, guardar SOLO la visualización principal
-                if 'visualizations' in processed_results and processed_results['visualizations']:
-                    # Intentar encontrar la visualización global primero
-                    main_viz = None
-                    
-                    # Buscar primero la visualización global (si existe)
-                    for viz_name, viz_img in processed_results['visualizations'].items():
-                        if 'global' in viz_name:
-                            main_viz = viz_img
-                            break
-                    
-                    # Si no hay visualización global, usar la primera disponible
-                    if main_viz is None and processed_results['visualizations']:
-                        main_viz = next(iter(processed_results['visualizations'].values()))
-                    
-                    # Guardar la visualización principal
-                    if main_viz is not None:
-                        viz_path = os.path.join(defect_dir, f"{name}_{defect_type}{ext}")
-                        cv2.imwrite(viz_path, main_viz)
-                        output_paths[f'{defect_type}_image'] = viz_path
-    
-    # MODIFICADO: Para etiquetas, guardar solo UNA imagen consolidada
-    if 'etiqueta' in prediction_results['processed_results'] and 'etiqueta_detections' in prediction_results:
-        etiqueta_results = prediction_results['processed_results']['etiqueta']
-        etiqueta_detections = prediction_results['etiqueta_detections']
-        
-        if etiqueta_detections:
-            # Crear directorio para etiquetas
-            etiqueta_dir = os.path.join(image_output_dir, "etiqueta")
-            os.makedirs(etiqueta_dir, exist_ok=True)
-            
-            # Guardar JSON con resultados del OCR
-            if 'processed_data' in etiqueta_results and etiqueta_results['processed_data']:
-                json_path = os.path.join(etiqueta_dir, f"{name}_etiqueta_ocr.json")
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(etiqueta_results['processed_data'], f, ensure_ascii=False, indent=4)
-                output_paths['etiqueta_json'] = json_path
-            
-            # Crear una imagen consolidada con todas las etiquetas
-            etiqueta_img = processed_image.copy()
-            
-            # Dibujar el contorno verde de la palanquilla
-            cv2.polylines(etiqueta_img, [np.array(vertices)], True, (0, 255, 0), 2)
-            
-            # Título para la imagen
-            cv2.putText(etiqueta_img, "Etiquetas", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            cv2.putText(etiqueta_img, f"Total: {len(etiqueta_detections)}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            
-            # Procesar cada etiqueta
-            for i, etiqueta in enumerate(etiqueta_detections):
-                x1, y1, x2, y2 = etiqueta['bbox']
-                
-                # Dibujar rectángulo rojo alrededor de la etiqueta
-                cv2.rectangle(etiqueta_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                
-                # Añadir número de índice de la etiqueta
-                cv2.putText(etiqueta_img, f"#{i+1}", (x1, y1-5), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                
-                # Añadir información OCR si está disponible
-                if 'processed_data' in etiqueta_results and i < len(etiqueta_results['processed_data']):
-                    ocr_data = etiqueta_results['processed_data'][i]
-                    text_x = x1
-                    text_y = y2 + 15
-                    
-                    # Mostrar código y calidad de la etiqueta
-                    if 'code' in ocr_data:
-                        cv2.putText(etiqueta_img, f"Code: {ocr_data['code']}", (text_x, text_y), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                    
-                    if 'quality' in ocr_data:
-                        cv2.putText(etiqueta_img, f"Quality: {ocr_data['quality']}", (text_x, text_y + 15), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
-            
-            # Guardar la imagen consolidada de etiquetas
-            etiqueta_path = os.path.join(etiqueta_dir, f"{name}_etiqueta{ext}")
-            cv2.imwrite(etiqueta_path, etiqueta_img)
-            output_paths['etiqueta_image'] = etiqueta_path
+            # Guardar las visualizaciones originales específicas para referencia
+            if 'visualizations' in processed_results[defect_type]:
+                for viz_name, viz_img in processed_results[defect_type]['visualizations'].items():
+                    viz_path = os.path.join(defect_dir, f"{name}_{defect_type}_{viz_name}{ext}")
+                    try:
+                        cv2.imwrite(viz_path, viz_img)
+                    except Exception as e:
+                        print(f"Error al guardar visualización {viz_name}: {e}")
     
     return output_paths
 
