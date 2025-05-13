@@ -5,7 +5,7 @@ import pandas as pd
 
 class InclusionNoMetalicaProcessor:
     """
-    Procesador para inclusiones no metálicas
+    Procesador para inclusiones no metálicas con análisis dentro de un área fija de 500x500 píxeles
     """
     
     def __init__(self):
@@ -13,11 +13,13 @@ class InclusionNoMetalicaProcessor:
         Inicializa el procesador de inclusiones no metálicas
         """
         self.name = "inclusion_no_metalica"
+        self.square_size = 500  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
     
-    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.5):
+    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.3):
         """
         Analiza inclusiones no metálicas contando el número de puntos/inclusiones 
-        SOLAMENTE dentro del área segmentada (máscara) con sensibilidad ajustable
+        SOLAMENTE dentro de la intersección entre la máscara y un cuadrado de 500x500
+        píxeles centrado en la máscara.
         
         Args:
             inclusion_mask: Máscara binaria de la región con inclusiones (ROI recortado)
@@ -27,13 +29,13 @@ class InclusionNoMetalicaProcessor:
             sensitivity: Valor entre 0 y 1 que controla la sensibilidad de detección (0: menos sensible, 1: más sensible)
             
         Returns:
-            metrics: Diccionario con métricas como número de inclusiones, área y concentración
+            metrics: Diccionario con métricas como número de inclusiones, área de intersección y métrica C
         """
         if inclusion_mask is None or inclusion_mask.size == 0:
             return {
                 'num_inclusiones': 0,
-                'area_pixeles': 0, 
-                'concentracion': 0
+                'area_interseccion': 0, 
+                'metrica_C': 0
             }
         
         try:
@@ -46,8 +48,35 @@ class InclusionNoMetalicaProcessor:
             # Asegurarnos de que la máscara esté en formato uint8
             binary_mask = binary_mask.astype(np.uint8)
             
-            # Calcular el área de la máscara (solo región segmentada)
-            area_pixeles = cv2.countNonZero(binary_mask)
+            # Obtener dimensiones de la máscara
+            h, w = binary_mask.shape[:2]
+            
+            # Calcular el centro de la máscara usando momentos
+            M = cv2.moments(binary_mask)
+            if M["m00"] > 0:
+                center_x = int(M["m10"] / M["m00"])
+                center_y = int(M["m01"] / M["m00"])
+            else:
+                # Si no se puede calcular el centro, usar el centro geométrico
+                center_x = w // 2
+                center_y = h // 2
+            
+            # Calcular las coordenadas del cuadrado de 500x500 centrado en el centro de la máscara
+            half_size = self.square_size // 2
+            x1_square = max(0, center_x - half_size)
+            y1_square = max(0, center_y - half_size)
+            x2_square = min(w, center_x + half_size)
+            y2_square = min(h, center_y + half_size)
+            
+            # Crear máscara para el cuadrado
+            square_mask = np.zeros_like(binary_mask)
+            square_mask[y1_square:y2_square, x1_square:x2_square] = 255
+            
+            # Calcular la intersección entre la máscara original y el cuadrado
+            intersection_mask = cv2.bitwise_and(binary_mask, square_mask)
+            
+            # Calcular el área de la intersección
+            area_interseccion = cv2.countNonZero(intersection_mask)
             
             # Procesar la imagen para detectar inclusiones
             num_inclusiones = 0
@@ -61,24 +90,23 @@ class InclusionNoMetalicaProcessor:
                     gray_img = inclusion_img.copy()
                 
                 # Asegurarnos de que la máscara tenga el mismo tamaño que la imagen
-                if gray_img.shape != binary_mask.shape:
-                    binary_mask = cv2.resize(binary_mask, (gray_img.shape[1], gray_img.shape[0]))
+                if gray_img.shape != intersection_mask.shape:
+                    intersection_mask = cv2.resize(intersection_mask, (gray_img.shape[1], gray_img.shape[0]))
+                    square_mask = cv2.resize(square_mask, (gray_img.shape[1], gray_img.shape[0]))
                 
-                # Aplicar la máscara sobre la imagen en escala de grises 
-                masked_gray = cv2.bitwise_and(gray_img, gray_img, mask=binary_mask)
+                # Aplicar la máscara de intersección sobre la imagen en escala de grises 
+                masked_gray = cv2.bitwise_and(gray_img, gray_img, mask=intersection_mask)
                 
                 # Aplicar filtro gaussiano para reducir ruido
                 blurred = cv2.GaussianBlur(masked_gray, (5, 5), 0)
                 
                 # AJUSTE DE SENSIBILIDAD: Calibrar parámetros según la sensibilidad
                 # BlockSize: Tamaño de la ventana de adaptación (mayor = menos sensible)
-                # Para sensibilidad 0.5, usar 16
                 block_size = int(21 - 12 * sensitivity)  # Rango: 9-21 (menor = más sensible)
                 block_size = max(9, block_size)  # Mínimo 9
                 block_size = block_size if block_size % 2 == 1 else block_size + 1  # Debe ser impar
                 
                 # Valor C: Constante de umbral (mayor = menos sensible)
-                # Para sensibilidad 0.5, usar 4
                 c_value = int(8 - 6 * sensitivity)  # Rango: 2-8
                 c_value = max(2, c_value)  # Mínimo 2
                 
@@ -86,19 +114,17 @@ class InclusionNoMetalicaProcessor:
                 thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                              cv2.THRESH_BINARY_INV, block_size, c_value)
                 
-                # Aplicar nuevamente la máscara
-                thresh_masked = cv2.bitwise_and(thresh, thresh, mask=binary_mask)
+                # Aplicar nuevamente la máscara de intersección
+                thresh_masked = cv2.bitwise_and(thresh, thresh, mask=intersection_mask)
                 
                 # Filtrado morfológico moderado
                 kernel = np.ones((2, 2), np.uint8)  # Kernel más pequeño para mantener más detalles
                 opening = cv2.morphologyEx(thresh_masked, cv2.MORPH_OPEN, kernel, iterations=1)
                 
                 # Encontrar contornos
-                # Encontrar contornos
                 contours, _ = cv2.findContours(opening, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
                 # AJUSTE DE SENSIBILIDAD: Área mínima según sensibilidad
-                # Para sensibilidad 0.5, usar área mínima 8
                 min_area = int(12 - 8 * sensitivity)  # Rango: 4-12 píxeles
                 min_area = max(4, min_area)  # Mínimo 4
                 valid_contours = [c for c in contours if cv2.contourArea(c) >= min_area]
@@ -120,7 +146,6 @@ class InclusionNoMetalicaProcessor:
                     if env_mean > 0:
                         contrast = (env_mean - mean_value) / env_mean
                         # Umbral de contraste ajustado según sensibilidad
-                        # Para sensibilidad 0.5, usar 0.08
                         contrast_threshold = 0.04 + (0.08 * (1 - sensitivity))  # Rango: 0.04-0.12
                         if contrast > contrast_threshold:
                             filtered_contours.append(contour)
@@ -133,22 +158,25 @@ class InclusionNoMetalicaProcessor:
                 # Contar el número final de inclusiones
                 num_inclusiones = len(valid_contours)
             
-            # Calcular la concentración
-            concentracion = 0
-            if area_pixeles > 0:
-                concentracion = num_inclusiones / area_pixeles
+            # Calcular la métrica C = # / A (número de inclusiones / área intersectada)
+            metrica_C = 0
+            if area_interseccion > 0:
+                metrica_C = num_inclusiones / area_interseccion
             
             # Visualización
             if inclusion_img is not None:
                 viz_img = inclusion_img.copy() if len(inclusion_img.shape) == 3 else cv2.cvtColor(inclusion_img, cv2.COLOR_GRAY2BGR)
                 
-                # Encontrar contornos de la máscara para visualización
-                mask_contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Dibujar el cuadrado de 500x500
+                cv2.rectangle(viz_img, (x1_square, y1_square), (x2_square, y2_square), (0, 255, 0), 2)
                 
-                # Dibujar la región segmentada con un overlay transparente verde
+                # Encontrar contornos de la máscara de intersección para visualización
+                intersection_contours, _ = cv2.findContours(intersection_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                # Dibujar la región de intersección con un overlay transparente azul
                 overlay = viz_img.copy()
-                cv2.drawContours(overlay, mask_contours, -1, (0, 255, 0), 2)  # Contorno verde
-                cv2.fillPoly(overlay, mask_contours, (0, 255, 0, 128))  # Relleno verde semi-transparente
+                cv2.drawContours(overlay, intersection_contours, -1, (255, 0, 0), 2)  # Contorno azul
+                cv2.fillPoly(overlay, intersection_contours, (255, 0, 0, 128))  # Relleno azul semi-transparente
                 alpha = 0.3  # Factor de transparencia
                 cv2.addWeighted(overlay, alpha, viz_img, 1-alpha, 0, viz_img)
                 
@@ -170,13 +198,18 @@ class InclusionNoMetalicaProcessor:
                 # Añadir información sobre el número de inclusiones y el área
                 cv2.putText(viz_img, f"Inclusiones: {num_inclusiones}", (10, 20), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                cv2.putText(viz_img, f"Área ROI: {area_pixeles} px²", (10, 40), 
+                cv2.putText(viz_img, f"Área intersección: {area_interseccion} px²", (10, 40), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                cv2.putText(viz_img, f"Concentración: {concentracion:.6f}", (10, 60), 
+                cv2.putText(viz_img, f"Métrica C = #/A: {metrica_C:.6f}", (10, 60), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 
                 # Guardar la visualización del ROI
                 #cv2.imwrite("temp_inclusion_no_metalica_analysis_roi.jpg", viz_img)
+                
+                # Crear imagen específica mostrando solo el área de segmentación (intersección)
+                segmentation_only = np.zeros_like(viz_img)
+                # Copiar solo la región de intersección
+                segmentation_only = cv2.bitwise_and(viz_img, viz_img, mask=intersection_mask)
                 
                 # Visualización global (código igual que antes)
                 full_img = None
@@ -223,9 +256,17 @@ class InclusionNoMetalicaProcessor:
                             # Dibujar un rectángulo para resaltar la zona de inclusiones
                             cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 255, 255), 2)
                             
-                            # Calcular el centro del rectángulo
-                            center_x = int((adj_x1 + adj_x2) / 2)
-                            center_y = int((adj_y1 + adj_y2) / 2)
+                            # Calcular las coordenadas del cuadrado de análisis ajustadas
+                            adj_x1_square = adj_x1 + x1_square
+                            adj_y1_square = adj_y1 + y1_square
+                            adj_x2_square = adj_x1 + x2_square
+                            adj_y2_square = adj_y1 + y2_square
+                            
+                            # Dibujar el cuadrado de análisis de 500x500
+                            cv2.rectangle(full_img, 
+                                        (int(adj_x1_square), int(adj_y1_square)), 
+                                        (int(adj_x2_square), int(adj_y2_square)), 
+                                        (0, 255, 0), 2)
                             
                             # Añadir texto informativo sobre inclusiones
                             cv2.putText(full_img, f"Inclusiones: {num_inclusiones}", (center_x - 80, adj_y1 - 10), 
@@ -234,9 +275,9 @@ class InclusionNoMetalicaProcessor:
                         # Añadir información general en la parte superior de la imagen
                         cv2.putText(full_img, f"Inclusiones no metálicas: {num_inclusiones}", (10, 30),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                        cv2.putText(full_img, f"Área analizada: {area_pixeles} px²", (10, 60),
+                        cv2.putText(full_img, f"Área intersección: {area_interseccion} px²", (10, 60),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                        cv2.putText(full_img, f"Concentración: {concentracion:.6f} inclusiones/px²", (10, 90),
+                        cv2.putText(full_img, f"Métrica C = #/A: {metrica_C:.6f}", (10, 90),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
                         # Guardar la visualización completa
@@ -249,18 +290,21 @@ class InclusionNoMetalicaProcessor:
                 # Retornar información completa
                 return {
                     'num_inclusiones': num_inclusiones,
-                    'area_pixeles': area_pixeles,
-                    'concentracion': concentracion,
+                    'area_interseccion': area_interseccion,
+                    'metrica_C': metrica_C,
                     'local_visualization': viz_img,
                     'global_visualization': full_img,
-                    'contours': valid_contours
+                    'segmentation_only': segmentation_only,  # Nueva imagen con solo la segmentación
+                    'contours': valid_contours,
+                    'intersection_mask': intersection_mask,  # Máscara de la intersección
+                    'square': (x1_square, y1_square, x2_square, y2_square)  # Coordenadas del cuadrado
                 }
             
             # Retornar solo métricas básicas
             return {
                 'num_inclusiones': num_inclusiones,
-                'area_pixeles': area_pixeles,
-                'concentracion': concentracion
+                'area_interseccion': area_interseccion,
+                'metrica_C': metrica_C
             }
             
         except Exception as e:
@@ -271,8 +315,8 @@ class InclusionNoMetalicaProcessor:
             # Retornar valores por defecto en caso de error
             return {
                 'num_inclusiones': 0,
-                'area_pixeles': 0,
-                'concentracion': 0
+                'area_interseccion': 0,
+                'metrica_C': 0
             }
     
     def generate_report(self, image_name, inclusiones_data, output_dir):
@@ -293,7 +337,10 @@ class InclusionNoMetalicaProcessor:
         # Crear un DataFrame con los datos, excluyendo objetos complejos
         df = pd.DataFrame([{k: v for k, v in inclusion.items() if k not in ['local_visualization', 
                                                                           'global_visualization', 
-                                                                          'contours']} 
+                                                                          'segmentation_only',
+                                                                          'contours',
+                                                                          'intersection_mask',
+                                                                          'square']} 
                          for inclusion in inclusiones_data])
         
         # Formato del informe
@@ -311,9 +358,9 @@ class InclusionNoMetalicaProcessor:
             
             for i, inclusion in enumerate(inclusiones_data):
                 f.write(f"REGIÓN DE INCLUSIONES #{i+1}\n")
-                f.write(f"  Número de inclusiones: {inclusion['num_inclusiones']}\n")
-                f.write(f"  Área analizada: {inclusion['area_pixeles']} píxeles²\n")
-                f.write(f"  Concentración: {inclusion['concentracion']:.6f} inclusiones/píxel²\n")
+                f.write(f"  Número de inclusiones (#): {inclusion['num_inclusiones']}\n")
+                f.write(f"  Área intersección (A): {inclusion['area_interseccion']} píxeles²\n")
+                f.write(f"  Métrica C = #/A: {inclusion['metrica_C']:.6f}\n")
                 if 'conf' in inclusion:
                     f.write(f"  Confianza: {inclusion['conf']:.2f}\n")
                 f.write("\n")
@@ -366,14 +413,14 @@ class InclusionNoMetalicaProcessor:
                 inclusion_mask = mask[y1:y2, x1:x2]
             
             # Usar una sensibilidad alta (0.7) para detectar un número razonable de inclusiones
-            metrics = self.measure_inclusion(inclusion_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2), sensitivity=0.7)
+            metrics = self.measure_inclusion(inclusion_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2), sensitivity=0.3)
             
             # Combinar datos
             inclusion_data = {
                 'id': i+1,
                 'num_inclusiones': metrics['num_inclusiones'],
-                'area_pixeles': metrics['area_pixeles'],
-                'concentracion': metrics['concentracion'],
+                'area_interseccion': metrics['area_interseccion'],
+                'metrica_C': metrics['metrica_C'],
                 'conf': conf,
                 'bbox': (x1, y1, x2, y2)
             }
@@ -386,6 +433,11 @@ class InclusionNoMetalicaProcessor:
             if 'global_visualization' in metrics:
                 visualization_key = f"inclusion_{i+1}_global"
                 visualizations[visualization_key] = metrics['global_visualization']
+                
+            # Guardar específicamente la imagen de segmentación
+            if 'segmentation_only' in metrics:
+                visualization_key = f"inclusion_{i+1}_segmentation"
+                visualizations[visualization_key] = metrics['segmentation_only']
             
             results.append(inclusion_data)
         
@@ -398,6 +450,14 @@ class InclusionNoMetalicaProcessor:
             
             # Generar el reporte en la carpeta específica
             report_paths = self.generate_report(image_name, results, defect_dir)
+            
+            # Guardar las imágenes de segmentación en la carpeta final
+            for i, detection in enumerate(results):
+                if f"inclusion_{i+1}_segmentation" in visualizations:
+                    segmentation_img = visualizations[f"inclusion_{i+1}_segmentation"]
+                    segmentation_path = os.path.join(defect_dir, f"{image_name}_inclusion_{i+1}_segmentation.jpg")
+                    cv2.imwrite(segmentation_path, segmentation_img)
+                    print(f"Imagen de segmentación guardada en: {segmentation_path}")
         
         return {
             'processed_data': results,
