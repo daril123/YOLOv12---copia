@@ -443,6 +443,7 @@ class InclusionNoMetalicaProcessor:
         
         # Si hay resultados y tenemos un nombre de imagen y un directorio de salida, generar un reporte
         report_paths = None
+        # Guardar las imágenes de segmentación en la carpeta final
         if results and image_name and output_dir:
             # Crear directorio para este tipo de defecto
             defect_dir = os.path.join(output_dir, image_name, self.name)
@@ -451,6 +452,7 @@ class InclusionNoMetalicaProcessor:
             # Generar el reporte en la carpeta específica
             report_paths = self.generate_report(image_name, results, defect_dir)
             
+            # ELIMINAR O COMENTAR DESDE AQUÍ
             # Guardar las imágenes de segmentación en la carpeta final
             for i, detection in enumerate(results):
                 if f"inclusion_{i+1}_segmentation" in visualizations:

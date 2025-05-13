@@ -280,7 +280,6 @@ def input_fn(image_path):
         'ext': ext
     }
 
-
 def predict_fn(input_data, models, output_dir=None):
     """
     Realiza la detección de vértices y defectos, y los clasifica
@@ -423,17 +422,6 @@ def predict_fn(input_data, models, output_dir=None):
     if output_dir:
         debug_dir = os.path.join(output_dir, image_name)
         os.makedirs(debug_dir, exist_ok=True)
-        
-        # Visualizar máscara original
-        #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_original.jpg"), palanquilla_mask)
-        
-        # Visualizar vértices sobre la imagen original
-        debug_img = image.copy()
-        cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
-        for i, vertex in enumerate(vertices):
-            cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
-            cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_original.jpg"), debug_img)
     
     # MODIFICADO: NUEVO PUNTO 4.5 - Procesar abombamiento ANTES de la rotación
     print("Procesando abombamiento con imagen original (antes de rotación)...")
@@ -688,6 +676,8 @@ def predict_fn(input_data, models, output_dir=None):
             image = rotated_image
             palanquilla_mask = rotated_mask
             vertices = rotated_vertices
+            
+            # MODIFICACIÓN: Actualizar las coordenadas de las etiquetas después de la rotación
             if etiqueta_detections:
                 print("Actualizando coordenadas de etiquetas después de la rotación...")
                 rotated_etiquetas = []
@@ -738,13 +728,14 @@ def predict_fn(input_data, models, output_dir=None):
                         cv2.putText(debug_etiquetas_img, f"Etiqueta {i+1}", (x1, y1-10), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     
-                    #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_etiquetas_rotadas.jpg"), debug_etiquetas_img)
-                    
                     # Extraer y guardar las imágenes de las etiquetas rotadas para verificación
+                    etiq_dir = os.path.join(debug_dir, "etiqueta")
+                    os.makedirs(etiq_dir, exist_ok=True)
                     for i, etiqueta in enumerate(etiqueta_detections):
                         x1, y1, x2, y2 = etiqueta['bbox']
                         etiqueta_img = rotated_image[y1:y2, x1:x2].copy()
-                        cv2.imwrite(os.path.join(debug_dir, f"etiqueta/{image_name}_etiqueta_{i+1}_rotada.jpg"), etiqueta_img)
+                        cv2.imwrite(os.path.join(etiq_dir, f"{image_name}_etiqueta_{i+1}_rotada.jpg"), etiqueta_img)
+            
             # Guardar información de rotación
             rotacion_info = {
                 'angulo': rotation_angle,
@@ -753,55 +744,6 @@ def predict_fn(input_data, models, output_dir=None):
                 'etiqueta_bbox': etiqueta_detections[0]['bbox'] if etiqueta_detections else None
             }
             
-            # Guardar visualización de diagnóstico de la imagen rotada
-            if output_dir:
-                # Visualizar máscara rotada
-                #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_mascara_rotada.jpg"), palanquilla_mask)
-                
-                # Visualizar vértices sobre la imagen rotada
-                debug_img = image.copy()
-                cv2.polylines(debug_img, [np.array(vertices)], True, (0, 255, 0), 2)
-                for i, vertex in enumerate(vertices):
-                    cv2.circle(debug_img, tuple(vertex), 8, (0, 0, 255), -1)
-                    cv2.putText(debug_img, str(i+1), tuple(vertex), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_vertices_rotados.jpg"), debug_img)
-                
-                # Guardar comparación antes/después de rotación - FIX APLICADO AQUÍ
-                try:
-                    # Redimensionar para comparación si las imágenes son grandes
-                    max_dim = 800
-                    if original_image.shape[0] > max_dim or original_image.shape[1] > max_dim:
-                        scale = max_dim / max(original_image.shape[0], original_image.shape[1])
-                        orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * scale), int(original_image.shape[0] * scale)))
-                        rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * scale), int(rotated_image.shape[0] * scale)))
-                        
-                        # Ensure both images have the same height for hstack
-                        min_height = min(orig_resized.shape[0], rot_resized.shape[0])
-                        orig_resized = cv2.resize(orig_resized, (int(orig_resized.shape[1] * min_height / orig_resized.shape[0]), min_height))
-                        rot_resized = cv2.resize(rot_resized, (int(rot_resized.shape[1] * min_height / rot_resized.shape[0]), min_height))
-                        
-                        comparison = np.hstack((orig_resized, rot_resized))
-                    else:
-                        # For smaller images, ensure same height as well
-                        min_height = min(original_image.shape[0], rotated_image.shape[0])
-                        orig_resized = cv2.resize(original_image, (int(original_image.shape[1] * min_height / original_image.shape[0]), min_height))
-                        rot_resized = cv2.resize(rotated_image, (int(rotated_image.shape[1] * min_height / rotated_image.shape[0]), min_height))
-                        comparison = np.hstack((orig_resized, rot_resized))
-                    
-                    # Add labels to comparison image
-                    cv2.putText(comparison, "ORIGINAL", (10, 30), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    
-                    # Add rotated label on the right side
-                    start_x = orig_resized.shape[1] + 10  # Start after the original image
-                    cv2.putText(comparison, f"ROTADA {rotation_angle:.1f}°", (start_x, 30), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    
-                    #cv2.imwrite(os.path.join(debug_dir, f"{image_name}_comparacion_rotacion.jpg"), comparison)
-                except Exception as e:
-                    # Silently continue if comparison visualization fails
-                    print(f"Nota: No se pudo crear la visualización de comparación: {e}")
-                    pass
         else:
             print("Error: No se encontraron contornos para el alineamiento")
             rotacion_info = {
@@ -827,7 +769,8 @@ def predict_fn(input_data, models, output_dir=None):
     
     # 7. Detectar defectos con el detector de defectos
     print(f"Detectando defectos")
-    detections, yolo_result = defect_detector.detect_defects(image)
+    # MODIFICACIÓN: Usar la imagen rotada para la detección de defectos
+    detections, yolo_result = defect_detector.detect_defects(image)  # imagen ya está rotada
     
     if not detections:
         print("No se detectaron defectos en esta imagen.")
@@ -860,14 +803,15 @@ def predict_fn(input_data, models, output_dir=None):
                 print(f"  - '{name}' mantenido como '{name}'")
     
     # 9. Clasificar los defectos según su posición en las zonas
+    # MODIFICACIÓN: Usar la imagen rotada para la clasificación de defectos
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
     
     # 10. Procesar romboidad (el abombamiento ya se procesó antes de la rotación)
-    # MODIFICADO: No volver a procesar abombamiento, usar los resultados originales
+    # MODIFICACIÓN: No volver a procesar abombamiento, usar los resultados originales
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
-        image,
-        vertices,
+        image,  # imagen ya está rotada
+        vertices,  # vértices ya están rotados
         image_name=image_name,
         output_dir=output_dir
     )
@@ -885,14 +829,15 @@ def predict_fn(input_data, models, output_dir=None):
     
     results['romboidad'] = romboidad_results
     
+    # MODIFICACIÓN: Procesar todos los tipos de defectos con la imagen rotada
     for defect_type, defects in classified_detections.items():
         if defects and defect_type in models['processors']:
             # Corregimos el bug aquí: usamos defect_type directamente
             processor = models['processors'][defect_type]
             results[defect_type] = processor.process(
                 defects, 
-                image, 
-                vertices, 
+                image,  # imagen ya está rotada
+                vertices,  # vértices ya están rotados
                 zone_masks,
                 image_name=image_name,
                 output_dir=output_dir
@@ -904,8 +849,8 @@ def predict_fn(input_data, models, output_dir=None):
         label_extractor = models['processors']['etiqueta']
         label_results = label_extractor.process(
             etiqueta_detections,
-            image,
-            corners=vertices,
+            image,  # imagen ya está rotada
+            corners=vertices,  # vértices ya están rotados
             zone_masks=zone_masks,
             image_name=image_name,
             output_dir=output_dir
@@ -925,10 +870,11 @@ def predict_fn(input_data, models, output_dir=None):
         'classified_detections': classified_detections,
         'processed_results': results,
         'palanquilla_mask': palanquilla_mask,
-        'image_procesada': image,
+        'image_procesada': image,  # Esta es la imagen rotada
         'rotacion_info': rotacion_info,
         'original_image': original_image
     }
+
 def draw_all_defects_on_original_image(original_image, defects, processed_results, defect_type, corners):
     """
     Dibuja todos los defectos del mismo tipo en la imagen original con sus análisis
@@ -964,8 +910,6 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
         
         # Dibujar número de defecto
         cv2.putText(result_img, f"#{i+1}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-        # Código específico para cada tipo de defecto...
         
         # Dibujar métricas y vectores según el tipo de defecto
         if defect_type.startswith('grietas'):
@@ -1085,7 +1029,6 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
             cv2.putText(result_img, f"L={L:.1f}px, D={D:.1f}px, Dir={direccion}", 
                       (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
-        # Dentro de la función draw_all_defects_on_original_image, para el caso 'inclusion_no_metalica':
         elif defect_type == 'inclusion_no_metalica':
             # Para inclusiones no metálicas
             num_inclusiones = defect.get('num_inclusiones', 0)
@@ -1154,6 +1097,7 @@ def draw_all_defects_on_original_image(original_image, defects, processed_result
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     return result_img
+
 def overlay_sopladura_visualizations(original_image, processed_results, vertices):
     """
     Superpone las visualizaciones específicas de sopladura sobre la imagen original
@@ -1289,19 +1233,12 @@ def overlay_analysis_on_image(original_image, analysis_image, alpha=0.7):
     result = result * mask_3channel + original_image * inverted_mask
     
     return result.astype(np.uint8)
+
 def output_fn(prediction_results, output_dir, input_data):
     """
     Guarda los resultados del análisis con visualizaciones mejoradas:
-    - Una imagen consolidada por tipo de defecto que muestra los análisis sobre la imagen original
+    - Una imagen consolidada por tipo de defecto que muestra los análisis sobre la imagen final rotada
     - Reportes completos con todas las métricas
-    
-    Args:
-        prediction_results: Resultados del análisis
-        output_dir: Directorio base donde guardar los resultados
-        input_data: Información de la imagen de entrada
-        
-    Returns:
-        Dictionary con las rutas donde se guardaron los resultados
     """
     from utils.utils import safe_write_file, draw_arrow
     import json
@@ -1310,26 +1247,22 @@ def output_fn(prediction_results, output_dir, input_data):
     import os
     from pathlib import Path
     
-    # Importar la función para dibujar defectos en la imagen original
-    
-    
     # Extraer información básica
     name = input_data['name']
     ext = input_data['ext']
     
     # Obtener datos clave para el procesamiento
     original_image = prediction_results.get('original_image', None)
-    processed_image = prediction_results.get('image_procesada', original_image)
+    processed_image = prediction_results.get('image_procesada', original_image)  # Imagen rotada
     vertices = prediction_results.get('vertices', None)
     classified_detections = prediction_results.get('classified_detections', {})
+    processed_results = prediction_results.get('processed_results', {})
     
     # Crear carpeta principal para esta imagen
     image_output_dir = os.path.join(output_dir, name)
     os.makedirs(image_output_dir, exist_ok=True)
     
     output_paths = {}
-    
-    # SIMPLIFICADO: Guardar SOLO 2 imágenes en el directorio exterior
     
     # 1. Guardar la comparación antes y después de la rotación si hay rotación
     if 'rotacion_info' in prediction_results and prediction_results['rotacion_info']['angulo'] != 0:
@@ -1354,7 +1287,7 @@ def output_fn(prediction_results, output_dir, input_data):
         angulo = prediction_results['rotacion_info']['angulo']
         cv2.putText(comparison, "ORIGINAL", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(comparison, f"ROTADA {angulo}°", (w_comp+10, 30), 
+        cv2.putText(comparison, f"ROTADA {angulo:.1f}°", (w_comp+10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
         # Save comparison
@@ -1362,21 +1295,17 @@ def output_fn(prediction_results, output_dir, input_data):
         cv2.imwrite(comp_path, comparison)
         output_paths['rotacion_comparacion'] = comp_path
     
-    # 2. Guardar imagen con todos los defectos detectados (usando la visualización original para mantener compatibilidad)
+    # 2. Guardar imagen con todos los defectos detectados (visualización general)
     from common.defect_classifier import visualize_results_with_masks
     result_image = visualize_results_with_masks(
-        prediction_results['image_procesada'], 
+        processed_image,  # Usar imagen procesada (rotada)
         prediction_results['classified_detections']
     )
     result_path = os.path.join(image_output_dir, f"{name}_resultado{ext}")
     cv2.imwrite(result_path, result_image)
     output_paths['result_img'] = result_path
     
-    # NUEVA FUNCIONALIDAD: Crear visualizaciones mejoradas para cada tipo de defecto
-    
-    # Procesar cada tipo de defecto
-    classified_detections = prediction_results['classified_detections']
-    processed_results = prediction_results.get('processed_results', {})
+    # 3. Crear una visualización consolidada para cada tipo de defecto
     for defect_type, defects in classified_detections.items():
         if not defects:  # Saltar si no hay defectos de este tipo
             continue
@@ -1384,6 +1313,17 @@ def output_fn(prediction_results, output_dir, input_data):
         # Crear directorio para este tipo de defecto si no existe
         defect_dir = os.path.join(image_output_dir, defect_type)
         os.makedirs(defect_dir, exist_ok=True)
+        
+        # Tratamiento especial para defectos de análisis geométrico que no requieren consolidación
+        if defect_type in ['abombamiento', 'romboidad']:
+            # Mantener comportamiento existente para estos tipos
+            if defect_type in processed_results and 'visualizations' in processed_results[defect_type]:
+                visualizations = processed_results[defect_type]['visualizations']
+                for viz_name, viz_img in visualizations.items():
+                    viz_path = os.path.join(defect_dir, f"{name}_{viz_name}{ext}")
+                    cv2.imwrite(viz_path, viz_img)
+                    output_paths[f'{defect_type}_{viz_name}'] = viz_path
+            continue
         
         # Tratamiento especial para sopladuras
         if defect_type == 'sopladura' and defect_type in processed_results:
@@ -1395,38 +1335,32 @@ def output_fn(prediction_results, output_dir, input_data):
             )
             
             # Guardar la visualización
-            sopladura_path = os.path.join(defect_dir, f"{name}_sopladura_visualizacion{ext}")
+            sopladura_path = os.path.join(defect_dir, f"{name}_sopladura_consolidado{ext}")
             cv2.imwrite(sopladura_path, sopladura_img)
             output_paths['sopladura_visualizacion'] = sopladura_path
+            continue  # Ya creamos la visualización consolidada para sopladuras
+
+        # CONSOLIDACIÓN PRINCIPAL: Para todos los demás tipos de defectos
+        if defect_type in processed_results and 'processed_data' in processed_results[defect_type]:
+            # Obtener los resultados procesados para este tipo de defecto
+            processed_data = processed_results[defect_type]['processed_data']
             
-            # También guardar las visualizaciones individuales para referencia
+            # Crear imagen consolidada con todos los defectos de este tipo
+            consolidated_image = draw_all_defects_on_original_image(
+                processed_image,  # Usar imagen ROTADA
+                defects,
+                processed_data,
+                defect_type,
+                vertices
+            )
             
-    # Dentro de output_fn:
-    for defect_type, defects in classified_detections.items():
-        if not defects:  # Saltar si no hay defectos de este tipo
-            continue
+            # Guardar la imagen consolidada
+            consolidated_path = os.path.join(defect_dir, f"{name}_{defect_type}_consolidado{ext}")
+            cv2.imwrite(consolidated_path, consolidated_image)
+            output_paths[f'{defect_type}_consolidated'] = consolidated_path
             
-        # Crear directorio para este tipo de defecto si no existe
-        defect_dir = os.path.join(image_output_dir, defect_type)
-        os.makedirs(defect_dir, exist_ok=True)
-        
-        # Buscar visualizaciones globales para este tipo de defecto
-        if defect_type in processed_results and 'visualizations' in processed_results[defect_type]:
-            visualizations = processed_results[defect_type]['visualizations']
-            
-            # Buscar visualizaciones globales
-            global_viz_keys = [key for key in visualizations.keys() if 'global' in key]
-            
-            for key in global_viz_keys:
-                analysis_image = visualizations[key]
-                
-                # Superponer el análisis sobre la imagen original
-                overlaid_image = overlay_analysis_on_image(processed_image, analysis_image)
-                
-                # Guardar la visualización superpuesta
-                overlaid_path = os.path.join(defect_dir, f"{name}_{defect_type}_{key}_superpuesto{ext}")
-                cv2.imwrite(overlaid_path, overlaid_image)
-                output_paths[f'{defect_type}_{key}_overlaid'] = overlaid_path
+            # No guardar las imágenes de segmentación individuales para inclusiones no metálicas
+            # El código original guarda imágenes separadas, lo eliminamos de aquí.
     
     return output_paths
 
