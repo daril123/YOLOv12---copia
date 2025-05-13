@@ -1320,9 +1320,18 @@ def output_fn(prediction_results, output_dir, input_data):
             if defect_type in processed_results and 'visualizations' in processed_results[defect_type]:
                 visualizations = processed_results[defect_type]['visualizations']
                 for viz_name, viz_img in visualizations.items():
+                    # Usar overlay_analysis_on_image para superponer el análisis sobre la imagen original
+                    overlaid_img = overlay_analysis_on_image(processed_image, viz_img)
+                    
+                    # Guardar tanto la imagen original de análisis como la superpuesta
                     viz_path = os.path.join(defect_dir, f"{name}_{viz_name}{ext}")
                     cv2.imwrite(viz_path, viz_img)
                     output_paths[f'{defect_type}_{viz_name}'] = viz_path
+                    
+                    # Guardar la versión superpuesta
+                    overlay_path = os.path.join(defect_dir, f"{name}_{viz_name}_overlay{ext}")
+                    cv2.imwrite(overlay_path, overlaid_img)
+                    output_paths[f'{defect_type}_{viz_name}_overlay'] = overlay_path
             continue
         
         # Tratamiento especial para sopladuras
@@ -1338,7 +1347,18 @@ def output_fn(prediction_results, output_dir, input_data):
             sopladura_path = os.path.join(defect_dir, f"{name}_sopladura_consolidado{ext}")
             cv2.imwrite(sopladura_path, sopladura_img)
             output_paths['sopladura_visualizacion'] = sopladura_path
-            continue  # Ya creamos la visualización consolidada para sopladuras
+            
+            # Aplicar también overlay para visualizaciones específicas de sopladuras
+            if 'visualizations' in processed_results[defect_type]:
+                for viz_name, viz_img in processed_results[defect_type]['visualizations'].items():
+                    # Solo para imágenes (no máscaras)
+                    if viz_name.startswith('sopladura_') and not viz_name.endswith('_mask'):
+                        overlaid_img = overlay_analysis_on_image(processed_image, viz_img)
+                        
+                        overlay_path = os.path.join(defect_dir, f"{name}_{viz_name}_overlay{ext}")
+                        cv2.imwrite(overlay_path, overlaid_img)
+                        output_paths[f'{defect_type}_{viz_name}_overlay'] = overlay_path
+            continue
 
         # CONSOLIDACIÓN PRINCIPAL: Para todos los demás tipos de defectos
         if defect_type in processed_results and 'processed_data' in processed_results[defect_type]:
@@ -1359,8 +1379,24 @@ def output_fn(prediction_results, output_dir, input_data):
             cv2.imwrite(consolidated_path, consolidated_image)
             output_paths[f'{defect_type}_consolidated'] = consolidated_path
             
-            # No guardar las imágenes de segmentación individuales para inclusiones no metálicas
-            # El código original guarda imágenes separadas, lo eliminamos de aquí.
+            # Aplicar overlay para visualizaciones individuales de este tipo de defecto
+            if 'visualizations' in processed_results[defect_type]:
+                for viz_name, viz_img in processed_results[defect_type]['visualizations'].items():
+                    # Para cada visualización, crear una versión superpuesta
+                    if isinstance(viz_img, np.ndarray) and len(viz_img.shape) == 3:  # Verificar que es una imagen color
+                        try:
+                            overlaid_img = overlay_analysis_on_image(processed_image, viz_img)
+                            
+                            # Guardar la visualización original
+                            orig_viz_path = os.path.join(defect_dir, f"{name}_{viz_name}{ext}")
+                            cv2.imwrite(orig_viz_path, viz_img)
+                            
+                            # Guardar la versión superpuesta
+                            overlay_path = os.path.join(defect_dir, f"{name}_{viz_name}_overlay{ext}")
+                            cv2.imwrite(overlay_path, overlaid_img)
+                            output_paths[f'{defect_type}_{viz_name}_overlay'] = overlay_path
+                        except Exception as e:
+                            print(f"Error al crear overlay para {viz_name}: {e}")
     
     return output_paths
 
