@@ -350,12 +350,16 @@ def predict_fn(input_data, models, output_dir=None):
                 
                 # Buscar la máscara con mayor área para la clase palanquilla
                 max_area = 0
+                second_max_area = 0
+                palanquilla_mask = None
+                second_palanquilla_mask = None
+
                 for i, box in enumerate(boxes):
                     cls_id = int(box.cls[0].item())
                     if cls_id == palanquilla_class_id:
                         # Obtener la máscara para esta detección
                         mask_data = masks[i].data.cpu().numpy()
-                        mask = (mask_data > 0.5).astype(np.uint8) * 255
+                        mask = (mask_data > 0.98).astype(np.uint8) * 255
                         
                         # Asegurarse de que sea 2D
                         if len(mask.shape) > 2:
@@ -364,10 +368,21 @@ def predict_fn(input_data, models, output_dir=None):
                         # Calcular el área
                         area = np.count_nonzero(mask)
                         
-                        # Actualizar si es la mayor
+                        # Actualizar las máscaras según su tamaño
                         if area > max_area:
+                            # La actual pasa a ser la más grande
+                            # La que era más grande pasa a ser la segunda
+                            second_max_area = max_area
+                            second_palanquilla_mask = palanquilla_mask
                             max_area = area
                             palanquilla_mask = mask
+                        elif area > second_max_area:
+                            # La actual es mayor que la segunda pero menor que la más grande
+                            second_max_area = area
+                            second_palanquilla_mask = mask
+
+                # Al final del bucle, usar second_palanquilla_mask en lugar de palanquilla_mask
+                palanquilla_mask = second_palanquilla_mask
                             
                 # Si no encontramos ninguna máscara, usar método alternativo
                 if palanquilla_mask is None:
@@ -1239,6 +1254,7 @@ def output_fn(prediction_results, output_dir, input_data):
     Guarda los resultados del análisis con visualizaciones mejoradas:
     - Una imagen consolidada por tipo de defecto que muestra los análisis sobre la imagen final rotada
     - Reportes completos con todas las métricas
+    - Máscara de la palanquilla
     """
     from utils.utils import safe_write_file, draw_arrow
     import json
@@ -1258,12 +1274,49 @@ def output_fn(prediction_results, output_dir, input_data):
     classified_detections = prediction_results.get('classified_detections', {})
     processed_results = prediction_results.get('processed_results', {})
     
+    # NUEVO: Extraer la máscara de la palanquilla
+    palanquilla_mask = prediction_results.get('palanquilla_mask', None)
+    
     # Crear carpeta principal para esta imagen
     image_output_dir = os.path.join(output_dir, name)
     os.makedirs(image_output_dir, exist_ok=True)
     
     output_paths = {}
     
+    # NUEVO: Guardar la máscara de la palanquilla
+    if palanquilla_mask is not None:
+        # Guardar la máscara binaria
+        mask_path = os.path.join(image_output_dir, f"{name}_mascara{ext}")
+        cv2.imwrite(mask_path, palanquilla_mask)
+        output_paths['palanquilla_mask'] = mask_path
+        print(f"Máscara de la palanquilla guardada en: {mask_path}")
+        
+        # Crear una versión coloreada de la máscara para mejor visualización
+        # Convertir la máscara binaria a una imagen en color
+        mask_colored = np.zeros_like(processed_image)
+        # Usar un color verde para la máscara
+        mask_colored[palanquilla_mask > 0] = [0, 255, 0]
+        
+        # Guardar también la versión coloreada
+        colored_mask_path = os.path.join(image_output_dir, f"{name}_mascara_color{ext}")
+        cv2.imwrite(colored_mask_path, mask_colored)
+        output_paths['colored_mask'] = colored_mask_path
+        
+        # Crear una versión superpuesta sobre la imagen original
+        alpha = 0.3  # Factor de transparencia
+        mask_overlay = processed_image.copy()
+        # Aplicar una superposición semi-transparente
+        cv2.addWeighted(processed_image, 0.7, mask_colored, 0.3, 0, mask_overlay)
+        
+        # Dibujar también el contorno en la superposición para mayor claridad
+        contours, _ = cv2.findContours(palanquilla_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(mask_overlay, contours, -1, (0, 255, 0), 2)
+        
+        # Guardar la superposición
+        overlay_path = os.path.join(image_output_dir, f"{name}_mascara_overlay{ext}")
+        cv2.imwrite(overlay_path, mask_overlay)
+        output_paths['mask_overlay'] = overlay_path
+        print(f"Visualización superpuesta de la máscara guardada en: {overlay_path}")
     # 1. Guardar la comparación antes y después de la rotación si hay rotación
     if 'rotacion_info' in prediction_results and prediction_results['rotacion_info']['angulo'] != 0:
         # Get original and rotated images
