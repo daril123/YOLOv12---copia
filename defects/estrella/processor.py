@@ -16,7 +16,7 @@ class EstrellaProcessor:
         """
         self.name = "estrella"
     
-    def measure_estrella(self, estrella_mask, corners=None, estrella_img=None, bbox=None):
+    def measure_estrella(self, estrella_mask, corners=None, estrella_img=None, bbox=None, original_image=None):
         """
         Mide el diámetro de una estrella en píxeles
         
@@ -25,7 +25,8 @@ class EstrellaProcessor:
             corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left] en coordenadas globales
             estrella_img: Imagen recortada de la estrella (opcional, para visualizaciones)
             bbox: Bounding box de la estrella en coordenadas globales (x1, y1, x2, y2)
-            
+            original_image: Imagen original completa
+                
         Returns:
             metrics: Diccionario con la métrica diámetro en píxeles
         """
@@ -48,9 +49,15 @@ class EstrellaProcessor:
             x1, y1, x2, y2 = bbox
             global_pt1 = (local_pt1[0] + x1, local_pt1[1] + y1)
             global_pt2 = (local_pt2[0] + x1, local_pt2[1] + y1)
+            
+            # Convertir el contorno a coordenadas globales
+            global_contour = contour.copy()
+            global_contour[:, :, 0] += x1
+            global_contour[:, :, 1] += y1
         else:
             global_pt1 = local_pt1
             global_pt2 = local_pt2
+            global_contour = contour
         
         # Visualización si se proporciona imagen
         if estrella_img is not None:
@@ -67,73 +74,41 @@ class EstrellaProcessor:
                 # Dibujar flecha para el diámetro
                 draw_arrow(viz_img, local_pt1, local_pt2, (0, 255, 255), 2, 10, f"D={diametro:.1f}px", (5, -10))
             
-            # Guardar la visualización del ROI
-            #cv2.imwrite("temp_estrella_analysis_roi.jpg", viz_img)
-            
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
             
-            if corners is not None and bbox is not None:
+            if corners is not None and bbox is not None and original_image is not None:
                 try:
-                    # Estimar un tamaño razonable para la imagen completa
-                    x_values = [p[0] for p in corners]
-                    y_values = [p[1] for p in corners]
-                    min_x, max_x = min(x_values), max(x_values)
-                    min_y, max_y = min(y_values), max(y_values)
-                    
-                    # Añadir un poco de margen
-                    margin = 50
-                    img_width = max_x - min_x + 2*margin
-                    img_height = max_y - min_y + 2*margin
-                    
-                    # Asegurar tamaño mínimo
-                    img_width = max(img_width, 800)
-                    img_height = max(img_height, 800)
-                    
-                    # Crear imagen en blanco
-                    full_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
-                    
-                    # Ajustar las coordenadas para que estén dentro de la imagen
-                    adjusted_corners = [(x - min_x + margin, y - min_y + margin) for x, y in corners]
-                    
-                    # Convertir los puntos extremos a coordenadas ajustadas
-                    adjusted_pt1 = (global_pt1[0] - min_x + margin, global_pt1[1] - min_y + margin)
-                    adjusted_pt2 = (global_pt2[0] - min_x + margin, global_pt2[1] - min_y + margin)
+                    # Usar directamente la imagen original
+                    full_img = original_image.copy()
                     
                     # Dibujar el contorno de la palanquilla
-                    cv2.polylines(full_img, [np.array(adjusted_corners)], True, (0, 255, 0), 2)
+                    cv2.polylines(full_img, [np.array(corners)], True, (0, 255, 0), 2)
                     
                     # Dibujar los vértices numerados
-                    for i, corner in enumerate(adjusted_corners):
+                    for i, corner in enumerate(corners):
                         cv2.circle(full_img, (int(corner[0]), int(corner[1])), 8, (0, 0, 255), -1)
                         cv2.putText(full_img, str(i+1), (int(corner[0])-4, int(corner[1])+4), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     
                     # Dibujar la posición de la estrella
                     if bbox is not None:
                         x1, y1, x2, y2 = bbox
-                        adj_x1, adj_y1 = x1 - min_x + margin, y1 - min_y + margin
-                        adj_x2, adj_y2 = x2 - min_x + margin, y2 - min_y + margin
-                        cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 0, 255), 2)
+                        cv2.rectangle(full_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
                     
                     # Dibujar el contorno de la estrella
-                    adjusted_contour = contour.copy()
-                    adjusted_contour[:,:,0] = adjusted_contour[:,:,0] + int(adj_x1)
-                    adjusted_contour[:,:,1] = adjusted_contour[:,:,1] + int(adj_y1)
-                    cv2.drawContours(full_img, [adjusted_contour], -1, (0, 255, 0), 2)
+                    cv2.drawContours(full_img, [global_contour], -1, (0, 255, 0), 2)
                     
                     # Dibujar los puntos extremos de la estrella en la vista global
-                    cv2.circle(full_img, (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 5, (255, 0, 0), -1)
-                    cv2.circle(full_img, (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt1[0]), int(global_pt1[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt2[0]), int(global_pt2[1])), 5, (255, 0, 0), -1)
                     
                     # Dibujar la flecha para el diámetro
                     draw_arrow(full_img, 
-                              (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 
-                              (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 
-                              (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
+                            (int(global_pt1[0]), int(global_pt1[1])), 
+                            (int(global_pt2[0]), int(global_pt2[1])), 
+                            (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
                     
-                    # Guardar la visualización completa
-                    #cv2.imwrite("temp_estrella_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global para estrella: {e}")
                     import traceback
@@ -207,7 +182,7 @@ class EstrellaProcessor:
             image: Imagen original
             corners: Esquinas de la palanquilla
             zone_masks: Máscaras de zonas
-            
+                
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
@@ -239,7 +214,13 @@ class EstrellaProcessor:
                 estrella_mask = mask[y1:y2, x1:x2]
             
             # Medir la estrella
-            metrics = self.measure_estrella(estrella_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2))
+            metrics = self.measure_estrella(
+                estrella_mask, 
+                corners, 
+                image[y1:y2, x1:x2].copy(), 
+                (x1, y1, x2, y2),
+                image  # Pasar la imagen original
+            )
             
             # Combinar datos
             estrella_data = {

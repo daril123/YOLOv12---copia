@@ -16,7 +16,7 @@ class NucleoEsponjosoProcessor:
         """
         self.name = "nucleo_esponjoso"
     
-    def measure_nucleo(self, nucleo_mask, corners=None, nucleo_img=None, bbox=None, full_image_shape=None):
+    def measure_nucleo(self, nucleo_mask, corners=None, nucleo_img=None, bbox=None, full_image_shape=None, original_image=None):
         """
         Mide las propiedades de un núcleo esponjoso en píxeles
         y calcula el porcentaje de área que ocupa respecto a la palanquilla
@@ -27,6 +27,7 @@ class NucleoEsponjosoProcessor:
             nucleo_img: Imagen recortada del núcleo (opcional, para visualizaciones)
             bbox: Bounding box del núcleo en coordenadas globales (x1, y1, x2, y2)
             full_image_shape: Forma de la imagen completa (altura, ancho)
+            original_image: Imagen original completa
             
         Returns:
             metrics: Diccionario con las métricas de diámetro, área y porcentaje
@@ -74,9 +75,15 @@ class NucleoEsponjosoProcessor:
             x1, y1, x2, y2 = bbox
             global_pt1 = (local_pt1[0] + x1, local_pt1[1] + y1)
             global_pt2 = (local_pt2[0] + x1, local_pt2[1] + y1)
+            
+            # Convertir el contorno a coordenadas globales
+            global_contour = contour.copy()
+            global_contour[:, :, 0] += x1
+            global_contour[:, :, 1] += y1
         else:
             global_pt1 = local_pt1
             global_pt2 = local_pt2
+            global_contour = contour
         
         # Visualización si se proporciona imagen
         if nucleo_img is not None:
@@ -95,68 +102,37 @@ class NucleoEsponjosoProcessor:
             
             # Añadir información del área y porcentaje
             cv2.putText(viz_img, f"Área: {area_nucleo:.0f} px²", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             cv2.putText(viz_img, f"% Área: {porcentaje_area:.2f}%", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            
-            # Guardar la visualización del ROI
-            #cv2.imwrite("temp_nucleo_esponjoso_analysis_roi.jpg", viz_img)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
             
-            if corners is not None and bbox is not None:
+            if corners is not None and bbox is not None and original_image is not None:
                 try:
-                    # Estimar un tamaño razonable para la imagen completa
-                    x_values = [p[0] for p in corners]
-                    y_values = [p[1] for p in corners]
-                    min_x, max_x = min(x_values), max(x_values)
-                    min_y, max_y = min(y_values), max(y_values)
-                    
-                    # Añadir un poco de margen
-                    margin = 50
-                    img_width = max_x - min_x + 2*margin
-                    img_height = max_y - min_y + 2*margin
-                    
-                    # Asegurar tamaño mínimo
-                    img_width = max(img_width, 800)
-                    img_height = max(img_height, 800)
-                    
-                    # Crear imagen en blanco
-                    full_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
-                    
-                    # Ajustar las coordenadas para que estén dentro de la imagen
-                    adjusted_corners = [(x - min_x + margin, y - min_y + margin) for x, y in corners]
-                    
-                    # Convertir los puntos extremos a coordenadas ajustadas
-                    adjusted_pt1 = (global_pt1[0] - min_x + margin, global_pt1[1] - min_y + margin)
-                    adjusted_pt2 = (global_pt2[0] - min_x + margin, global_pt2[1] - min_y + margin)
+                    # Usar directamente la imagen original
+                    full_img = original_image.copy()
                     
                     # Dibujar el contorno de la palanquilla
-                    cv2.polylines(full_img, [np.array(adjusted_corners)], True, (0, 255, 0), 2)
-                    cv2.fillPoly(full_img, [np.array(adjusted_corners)], (20, 20, 20))  # Fondo oscuro para la palanquilla
+                    cv2.polylines(full_img, [np.array(corners)], True, (0, 255, 0), 2)
                     
                     # Dibujar los vértices numerados
-                    for i, corner in enumerate(adjusted_corners):
+                    for i, corner in enumerate(corners):
                         cv2.circle(full_img, (int(corner[0]), int(corner[1])), 8, (0, 0, 255), -1)
                         cv2.putText(full_img, str(i+1), (int(corner[0])-4, int(corner[1])+4), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     
                     # Dibujar la posición del núcleo esponjoso
                     if bbox is not None:
                         x1, y1, x2, y2 = bbox
-                        adj_x1, adj_y1 = x1 - min_x + margin, y1 - min_y + margin
-                        adj_x2, adj_y2 = x2 - min_x + margin, y2 - min_y + margin
-                        cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 0, 255), 2)
+                        cv2.rectangle(full_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
                     
                     # Dibujar el contorno del núcleo
-                    adjusted_contour = contour.copy()
-                    adjusted_contour[:,:,0] = adjusted_contour[:,:,0] + int(adj_x1)
-                    adjusted_contour[:,:,1] = adjusted_contour[:,:,1] + int(adj_y1)
-                    cv2.drawContours(full_img, [adjusted_contour], -1, (0, 255, 0), 2)
+                    cv2.drawContours(full_img, [global_contour], -1, (0, 255, 0), 2)
                     
                     # Calcular el centro aproximado del contorno
-                    M = cv2.moments(adjusted_contour)
+                    M = cv2.moments(global_contour)
                     if M["m00"] > 0:
                         cx = int(M["m10"] / M["m00"])
                         cy = int(M["m01"] / M["m00"])
@@ -166,25 +142,23 @@ class NucleoEsponjosoProcessor:
                         cv2.circle(full_img, center, int(diametro/2), (0, 255, 255), 2)
                     
                     # Dibujar los puntos extremos del núcleo en la vista global
-                    cv2.circle(full_img, (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 5, (255, 0, 0), -1)
-                    cv2.circle(full_img, (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt1[0]), int(global_pt1[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt2[0]), int(global_pt2[1])), 5, (255, 0, 0), -1)
                     
                     # Dibujar la flecha para el diámetro
                     draw_arrow(full_img, 
-                              (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 
-                              (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 
-                              (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
+                            (int(global_pt1[0]), int(global_pt1[1])), 
+                            (int(global_pt2[0]), int(global_pt2[1])), 
+                            (0, 255, 255), 2, 15, f"D={diametro:.1f}px")
                     
                     # Añadir información de área y porcentaje en la esquina superior
                     cv2.putText(full_img, f"Área núcleo: {area_nucleo:.0f} px²", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(full_img, f"Área palanquilla: {area_palanquilla:.0f} px²", (10, 60),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(full_img, f"Porcentaje de área: {porcentaje_area:.2f}%", (10, 90),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
-                    # Guardar la visualización completa
-                    #cv2.imwrite("temp_nucleo_esponjoso_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global para núcleo esponjoso: {e}")
                     import traceback
@@ -269,7 +243,7 @@ class NucleoEsponjosoProcessor:
             zone_masks: Máscaras de zonas
             image_name: Nombre de la imagen (sin extensión)
             output_dir: Directorio de salida para guardar reportes
-            
+                
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
@@ -301,7 +275,14 @@ class NucleoEsponjosoProcessor:
                 nucleo_mask = mask[y1:y2, x1:x2]
             
             # Medir el núcleo esponjoso
-            metrics = self.measure_nucleo(nucleo_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2), image.shape)
+            metrics = self.measure_nucleo(
+                nucleo_mask, 
+                corners, 
+                image[y1:y2, x1:x2].copy(), 
+                (x1, y1, x2, y2), 
+                image.shape,
+                image  # Pasamos la imagen original
+            )
             
             # Combinar datos
             nucleo_data = {

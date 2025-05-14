@@ -15,7 +15,7 @@ class InclusionNoMetalicaProcessor:
         self.name = "inclusion_no_metalica"
         self.square_size = 500  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
     
-    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.3):
+    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.3, original_image=None):
         """
         Analiza inclusiones no metálicas contando el número de puntos/inclusiones 
         SOLAMENTE dentro de la intersección entre la máscara y un cuadrado de 500x500
@@ -27,7 +27,8 @@ class InclusionNoMetalicaProcessor:
             inclusion_img: Imagen recortada de la región (opcional, para visualizaciones)
             bbox: Bounding box de la región en coordenadas globales (x1, y1, x2, y2)
             sensitivity: Valor entre 0 y 1 que controla la sensibilidad de detección (0: menos sensible, 1: más sensible)
-            
+            original_image: Imagen original completa
+                
         Returns:
             metrics: Diccionario con métricas como número de inclusiones, área de intersección y métrica C
         """
@@ -112,7 +113,7 @@ class InclusionNoMetalicaProcessor:
                 
                 # Usar un umbral adaptativo ajustado
                 thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                             cv2.THRESH_BINARY_INV, block_size, c_value)
+                                            cv2.THRESH_BINARY_INV, block_size, c_value)
                 
                 # Aplicar nuevamente la máscara de intersección
                 thresh_masked = cv2.bitwise_and(thresh, thresh, mask=intersection_mask)
@@ -193,74 +194,50 @@ class InclusionNoMetalicaProcessor:
                         
                         # Etiquetar la inclusión con un número
                         cv2.putText(viz_img, str(i+1), (cx+7, cy+7), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 
                 # Añadir información sobre el número de inclusiones y el área
                 cv2.putText(viz_img, f"Inclusiones: {num_inclusiones}", (10, 20), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 cv2.putText(viz_img, f"Área intersección: {area_interseccion} px²", (10, 40), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 cv2.putText(viz_img, f"Métrica C = #/A: {metrica_C:.6f}", (10, 60), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                
-                # Guardar la visualización del ROI
-                #cv2.imwrite("temp_inclusion_no_metalica_analysis_roi.jpg", viz_img)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
                 
                 # Crear imagen específica mostrando solo el área de segmentación (intersección)
                 segmentation_only = np.zeros_like(viz_img)
                 # Copiar solo la región de intersección
                 segmentation_only = cv2.bitwise_and(viz_img, viz_img, mask=intersection_mask)
                 
-                # Visualización global (código igual que antes)
+                # Visualización global
                 full_img = None
                 
-                if corners is not None and bbox is not None:
+                if corners is not None and bbox is not None and original_image is not None:
                     try:
-                        # Estimar un tamaño razonable para la imagen completa
-                        x_values = [p[0] for p in corners]
-                        y_values = [p[1] for p in corners]
-                        min_x, max_x = min(x_values), max(x_values)
-                        min_y, max_y = min(y_values), max(y_values)
-                        
-                        # Añadir un poco de margen
-                        margin = 50
-                        img_width = max_x - min_x + 2*margin
-                        img_height = max_y - min_y + 2*margin
-                        
-                        # Asegurar tamaño mínimo
-                        img_width = max(img_width, 800)
-                        img_height = max(img_height, 800)
-                        
-                        # Crear imagen en blanco
-                        full_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
-                        
-                        # Ajustar las coordenadas para que estén dentro de la imagen
-                        adjusted_corners = [(x - min_x + margin, y - min_y + margin) for x, y in corners]
+                        # Usar directamente la imagen original
+                        full_img = original_image.copy()
                         
                         # Dibujar el contorno de la palanquilla
-                        cv2.polylines(full_img, [np.array(adjusted_corners)], True, (0, 255, 0), 2)
-                        cv2.fillPoly(full_img, [np.array(adjusted_corners)], (20, 20, 20))
+                        cv2.polylines(full_img, [np.array(corners)], True, (0, 255, 0), 2)
                         
                         # Dibujar los vértices numerados
-                        for i, corner in enumerate(adjusted_corners):
+                        for i, corner in enumerate(corners):
                             cv2.circle(full_img, (int(corner[0]), int(corner[1])), 8, (0, 0, 255), -1)
                             cv2.putText(full_img, str(i+1), (int(corner[0])-4, int(corner[1])+4), 
-                                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                         
                         # Dibujar la posición de la región con inclusiones
                         if bbox is not None:
                             x1, y1, x2, y2 = bbox
-                            adj_x1, adj_y1 = x1 - min_x + margin, y1 - min_y + margin
-                            adj_x2, adj_y2 = x2 - min_x + margin, y2 - min_y + margin
                             
                             # Dibujar un rectángulo para resaltar la zona de inclusiones
-                            cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 255, 255), 2)
+                            cv2.rectangle(full_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)
                             
                             # Calcular las coordenadas del cuadrado de análisis ajustadas
-                            adj_x1_square = adj_x1 + x1_square
-                            adj_y1_square = adj_y1 + y1_square
-                            adj_x2_square = adj_x1 + x2_square
-                            adj_y2_square = adj_y1 + y2_square
+                            adj_x1_square = x1 + x1_square
+                            adj_y1_square = y1 + y1_square
+                            adj_x2_square = x1 + x2_square
+                            adj_y2_square = y1 + y2_square
                             
                             # Dibujar el cuadrado de análisis de 500x500
                             cv2.rectangle(full_img, 
@@ -268,20 +245,27 @@ class InclusionNoMetalicaProcessor:
                                         (int(adj_x2_square), int(adj_y2_square)), 
                                         (0, 255, 0), 2)
                             
+                            # Dibujar los contornos de las inclusiones en la imagen original
+                            if valid_contours:
+                                for contour in valid_contours:
+                                    # Convertir contorno a coordenadas globales
+                                    global_contour = contour.copy()
+                                    global_contour[:,:,0] += x1
+                                    global_contour[:,:,1] += y1
+                                    cv2.drawContours(full_img, [global_contour], -1, (0, 0, 255), 2)
+                            
                             # Añadir texto informativo sobre inclusiones
-                            cv2.putText(full_img, f"Inclusiones: {num_inclusiones}", (center_x - 80, adj_y1 - 10), 
-                                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                            cv2.putText(full_img, f"Inclusiones: {num_inclusiones}", (x1, y1 - 10), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                         
                         # Añadir información general en la parte superior de la imagen
                         cv2.putText(full_img, f"Inclusiones no metálicas: {num_inclusiones}", (10, 30),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         cv2.putText(full_img, f"Área intersección: {area_interseccion} px²", (10, 60),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         cv2.putText(full_img, f"Métrica C = #/A: {metrica_C:.6f}", (10, 90),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
-                        # Guardar la visualización completa
-                        #cv2.imwrite("temp_inclusion_no_metalica_analysis_full.jpg", full_img)
                     except Exception as e:
                         print(f"Error al crear visualización global para inclusiones no metálicas: {e}")
                         import traceback
@@ -381,7 +365,7 @@ class InclusionNoMetalicaProcessor:
             zone_masks: Máscaras de zonas
             image_name: Nombre de la imagen (sin extensión)
             output_dir: Directorio de salida para guardar reportes
-            
+                
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
@@ -413,7 +397,14 @@ class InclusionNoMetalicaProcessor:
                 inclusion_mask = mask[y1:y2, x1:x2]
             
             # Usar una sensibilidad alta (0.7) para detectar un número razonable de inclusiones
-            metrics = self.measure_inclusion(inclusion_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2), sensitivity=0.3)
+            metrics = self.measure_inclusion(
+                inclusion_mask, 
+                corners, 
+                image[y1:y2, x1:x2].copy(), 
+                (x1, y1, x2, y2), 
+                sensitivity=0.3,
+                original_image=image  # Pasar la imagen original
+            )
             
             # Combinar datos
             inclusion_data = {
@@ -443,7 +434,6 @@ class InclusionNoMetalicaProcessor:
         
         # Si hay resultados y tenemos un nombre de imagen y un directorio de salida, generar un reporte
         report_paths = None
-        # Guardar las imágenes de segmentación en la carpeta final
         if results and image_name and output_dir:
             # Crear directorio para este tipo de defecto
             defect_dir = os.path.join(output_dir, image_name, self.name)
@@ -451,15 +441,6 @@ class InclusionNoMetalicaProcessor:
             
             # Generar el reporte en la carpeta específica
             report_paths = self.generate_report(image_name, results, defect_dir)
-            
-            # ELIMINAR O COMENTAR DESDE AQUÍ
-            # Guardar las imágenes de segmentación en la carpeta final
-            for i, detection in enumerate(results):
-                if f"inclusion_{i+1}_segmentation" in visualizations:
-                    segmentation_img = visualizations[f"inclusion_{i+1}_segmentation"]
-                    segmentation_path = os.path.join(defect_dir, f"{image_name}_inclusion_{i+1}_segmentation.jpg")
-                    cv2.imwrite(segmentation_path, segmentation_img)
-                    print(f"Imagen de segmentación guardada en: {segmentation_path}")
         
         return {
             'processed_data': results,

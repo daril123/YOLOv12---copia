@@ -16,7 +16,7 @@ class MidwayCrackProcessor:
         """
         self.name = "grietas_medio_camino"
     
-    def measure_crack(self, crack_mask, corners=None, crack_img=None, bbox=None):
+    def measure_crack(self, crack_mask, corners=None, crack_img=None, bbox=None, original_image=None):
         """
         Mide las propiedades de una grieta de medio camino en píxeles, 
         calculando la distancia al borde más cercano de la palanquilla.
@@ -26,7 +26,8 @@ class MidwayCrackProcessor:
             corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left] en coordenadas globales
             crack_img: Imagen recortada de la grieta (opcional, para visualizaciones)
             bbox: Bounding box de la grieta en coordenadas globales (x1, y1, x2, y2)
-            
+            original_image: Imagen original completa
+                
         Returns:
             metrics: Diccionario con las métricas L, e, D en píxeles
         """
@@ -125,92 +126,59 @@ class MidwayCrackProcessor:
             
             # Anotar el valor de D en la imagen ROI
             cv2.putText(viz_img, f"D={D:.1f}px", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-            
-            # Guardar la visualización del ROI
-            #cv2.imwrite("temp_midway_crack_analysis_roi.jpg", viz_img)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             
             # Si tenemos suficiente información para crear una visualización global
             full_img = None
             
-            if corners is not None and bbox is not None and contour_point is not None and edge_point is not None:
+            if corners is not None and bbox is not None and contour_point is not None and edge_point is not None and original_image is not None:
                 try:
-                    # Estimar un tamaño razonable para la imagen completa
-                    x_values = [p[0] for p in corners]
-                    y_values = [p[1] for p in corners]
-                    min_x, max_x = min(x_values), max(x_values)
-                    min_y, max_y = min(y_values), max(y_values)
+                    # Usar directamente la imagen original
+                    full_img = original_image.copy()
                     
-                    # Añadir un poco de margen
-                    margin = 50
-                    img_width = max_x - min_x + 2*margin
-                    img_height = max_y - min_y + 2*margin
-                    
-                    # Asegurar tamaño mínimo
-                    img_width = max(img_width, 800)
-                    img_height = max(img_height, 800)
-                    
-                    # Crear imagen en blanco
-                    full_img = np.zeros((img_height, img_width, 3), dtype=np.uint8)
-                    
-                    # Ajustar las coordenadas para que estén dentro de la imagen
-                    adjusted_corners = [(x - min_x + margin, y - min_y + margin) for x, y in corners]
-                    adjusted_contour_point = (contour_point[0] - min_x + margin, contour_point[1] - min_y + margin)
-                    adjusted_edge_point = (edge_point[0] - min_x + margin, edge_point[1] - min_y + margin)
-                    
-                    # Convertir los puntos extremos a coordenadas ajustadas
-                    adjusted_pt1 = (global_pt1[0] - min_x + margin, global_pt1[1] - min_y + margin)
-                    adjusted_pt2 = (global_pt2[0] - min_x + margin, global_pt2[1] - min_y + margin)
-                    
+                    # Dibujar directamente con las coordenadas originales
                     # Dibujar el contorno de la palanquilla
-                    cv2.polylines(full_img, [np.array(adjusted_corners)], True, (0, 255, 0), 2)
+                    cv2.polylines(full_img, [np.array(corners)], True, (0, 255, 0), 2)
                     
                     # Dibujar los vértices numerados
-                    for i, corner in enumerate(adjusted_corners):
+                    for i, corner in enumerate(corners):
                         cv2.circle(full_img, (int(corner[0]), int(corner[1])), 8, (0, 0, 255), -1)
                         cv2.putText(full_img, str(i+1), (int(corner[0])-4, int(corner[1])+4), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     
                     # Dibujar la posición de la grieta
                     if bbox is not None:
                         x1, y1, x2, y2 = bbox
-                        adj_x1, adj_y1 = x1 - min_x + margin, y1 - min_y + margin
-                        adj_x2, adj_y2 = x2 - min_x + margin, y2 - min_y + margin
-                        cv2.rectangle(full_img, (int(adj_x1), int(adj_y1)), (int(adj_x2), int(adj_y2)), (0, 0, 255), 2)
+                        cv2.rectangle(full_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
                     
                     # Dibujar el contorno de la grieta
-                    adjusted_contour = global_contour.copy()
-                    adjusted_contour[:,:,0] = adjusted_contour[:,:,0] - min_x + margin
-                    adjusted_contour[:,:,1] = adjusted_contour[:,:,1] - min_y + margin
-                    cv2.drawContours(full_img, [adjusted_contour], -1, (0, 255, 0), 2)
+                    cv2.drawContours(full_img, [global_contour], -1, (0, 255, 0), 2)
                     
                     # Dibujar los puntos extremos de la grieta en la vista global
-                    cv2.circle(full_img, (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 5, (255, 0, 0), -1)
-                    cv2.circle(full_img, (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt1[0]), int(global_pt1[1])), 5, (255, 0, 0), -1)
+                    cv2.circle(full_img, (int(global_pt2[0]), int(global_pt2[1])), 5, (255, 0, 0), -1)
                     
                     # Dibujar la flecha L para la longitud total
                     draw_arrow(full_img, 
-                              (int(adjusted_pt1[0]), int(adjusted_pt1[1])), 
-                              (int(adjusted_pt2[0]), int(adjusted_pt2[1])), 
-                              (0, 255, 255), 2, 15, f"L={L:.1f}px")
+                            (int(global_pt1[0]), int(global_pt1[1])), 
+                            (int(global_pt2[0]), int(global_pt2[1])), 
+                            (0, 255, 255), 2, 15, f"L={L:.1f}px")
                     
                     # Marcar con un rectángulo rojo el punto del contorno más cercano al borde
                     cv2.rectangle(full_img, 
-                                 (int(adjusted_contour_point[0])-5, int(adjusted_contour_point[1])-5), 
-                                 (int(adjusted_contour_point[0])+5, int(adjusted_contour_point[1])+5), 
-                                 (0, 0, 255), 2)
+                                (int(contour_point[0])-5, int(contour_point[1])-5), 
+                                (int(contour_point[0])+5, int(contour_point[1])+5), 
+                                (0, 0, 255), 2)
                     
                     # Dibujar el punto en el borde
-                    cv2.circle(full_img, (int(adjusted_edge_point[0]), int(adjusted_edge_point[1])), 5, (255, 255, 0), -1)
+                    cv2.circle(full_img, (int(edge_point[0]), int(edge_point[1])), 5, (255, 255, 0), -1)
                     
                     # Dibujar la flecha para D desde el punto del contorno al punto en el borde
                     draw_arrow(full_img, 
-                              (int(adjusted_contour_point[0]), int(adjusted_contour_point[1])), 
-                              (int(adjusted_edge_point[0]), int(adjusted_edge_point[1])), 
-                              (0, 165, 255), 2, 15, f"D={D:.1f}px")
+                            (int(contour_point[0]), int(contour_point[1])), 
+                            (int(edge_point[0]), int(edge_point[1])), 
+                            (0, 165, 255), 2, 15, f"D={D:.1f}px")
                     
-                    # Guardar la visualización completa
-                    #cv2.imwrite("temp_midway_crack_analysis_full.jpg", full_img)
                 except Exception as e:
                     print(f"Error al crear visualización global: {e}")
                     import traceback
@@ -299,7 +267,7 @@ class MidwayCrackProcessor:
             zone_masks: Máscaras de zonas
             image_name: Nombre de la imagen (sin extensión)
             output_dir: Directorio de salida para guardar reportes
-            
+                
         Returns:
             processed_data: Diccionario con los resultados del procesamiento
         """
@@ -333,7 +301,13 @@ class MidwayCrackProcessor:
                 crack_mask = mask[y1:y2, x1:x2]
             
             # Medir la grieta
-            metrics = self.measure_crack(crack_mask, corners, image[y1:y2, x1:x2].copy(), (x1, y1, x2, y2))
+            metrics = self.measure_crack(
+                crack_mask, 
+                corners, 
+                image[y1:y2, x1:x2].copy(), 
+                (x1, y1, x2, y2),
+                image  # Pasar la imagen original
+            )
             
             # Combinar datos
             crack_data = {

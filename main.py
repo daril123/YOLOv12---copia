@@ -183,8 +183,8 @@ def model_fn(model_dir=None):
         Dictionary con los modelos cargados
     """
     # Rutas predeterminadas si no se especifica un directorio
-    vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Vertex\modelo_1.pt"
-    defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Defect\modelo_2.pt"
+    vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Vertex\model.pt"
+    defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Defect\model.pt"
     
     if model_dir:   
         # Si se proporciona un directorio, buscar los modelos allí
