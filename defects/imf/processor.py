@@ -335,14 +335,14 @@ class IMFProcessor:
         for pos in ['I', 'M', 'F']:
             h_data = imf_data["horizontal"][pos]
             if h_data["longitud"] is not None:
-                horizontal_data[f"H_{pos}_px"] = h_data["longitud"]
+                horizontal_data[f"{pos}_horizontal_px"] = h_data["longitud"]
                 # Eliminar la conversión a mm
         
         vertical_data = {}
         for pos in ['I', 'M', 'F']:
             v_data = imf_data["vertical"][pos]
             if v_data["longitud"] is not None:
-                vertical_data[f"V_{pos}_px"] = v_data["longitud"]
+                vertical_data[f"{pos}_vertical_px"] = v_data["longitud"]
                 # Eliminar la conversión a mm
         
         # Añadir dimensiones del rectángulo mínimo (solo en píxeles)
@@ -377,14 +377,14 @@ class IMFProcessor:
             
             f.write("MEDIDAS HORIZONTALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"H_{pos}_px"
+                key_px = f"{pos}_horizontal_px"
                 if key_px in horizontal_data:
                     f.write(f"  Línea H-{pos}: {horizontal_data[key_px]:.1f} px\n")
             f.write("\n")
             
             f.write("MEDIDAS VERTICALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"V_{pos}_px"
+                key_px = f"{pos}_vertical_px"
                 if key_px in vertical_data:
                     f.write(f"  Línea V-{pos}: {vertical_data[key_px]:.1f} px\n")
             f.write("\n")
