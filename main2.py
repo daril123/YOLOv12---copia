@@ -2002,21 +2002,21 @@ def get_parameters_from_csv(defect_type, csv_data):
         
         # Extraer medidas horizontales (H_I, H_M, H_F)
         for pos in ['I', 'M', 'F']:
-            h_key = f"H_{pos}_mm"
+            h_key = f"{pos}_horizontal_px"  # Cambiado de _mm a _px
             if h_key in csv_data[0]:
                 imf_values[h_key] = float(csv_data[0].get(h_key, 0))
                 
         # Extraer medidas verticales (V_I, V_M, V_F)
         for pos in ['I', 'M', 'F']:
-            v_key = f"V_{pos}_mm"
+            v_key = f"{pos}_vertical_px"  # Cambiado de _mm a _px
             if v_key in csv_data[0]:
                 imf_values[v_key] = float(csv_data[0].get(v_key, 0))
         
         # Extraer dimensiones totales
-        if 'ancho_mm' in csv_data[0]:
-            imf_values['ancho_mm'] = float(csv_data[0].get('ancho_mm', 0))
-        if 'alto_mm' in csv_data[0]:
-            imf_values['alto_mm'] = float(csv_data[0].get('alto_mm', 0))
+        if 'ancho_px' in csv_data[0]:  # Cambiado de ancho_mm a ancho_px
+            imf_values['ancho_px'] = float(csv_data[0].get('ancho_px', 0))
+        if 'alto_px' in csv_data[0]:  # Cambiado de alto_mm a alto_px
+            imf_values['alto_px'] = float(csv_data[0].get('alto_px', 0))
         
         imf_values['_id_relevante'] = 1  # Siempre el primero para IMF
         return imf_values
