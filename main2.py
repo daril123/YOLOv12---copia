@@ -338,7 +338,32 @@ def on_stream_error(error: Exception) -> bool:
 
 def on_stream_closed() -> None:
     logging.info("Transmisión de suscripción cerrada")
+def px_a_mm(valor_px, a=1.0, b=0.0):
+    """
+    Convierte píxeles a milímetros usando regresión lineal Y = aX + b
     
+    Args:
+        valor_px: Valor en píxeles
+        a: Pendiente (default: 1.0)
+        b: Intercepto (default: 0.0)
+    
+    Returns:
+        Valor en milímetros
+    """
+    return a * valor_px + b
+def mm_a_px(valor_mm, a=1.0, b=0.0):
+    """
+    Convierte píxeles a milímetros usando regresión lineal Y = aX + b
+    
+    Args:
+        valor_px: Valor en píxeles
+        a: Pendiente (default: 1.0)
+        b: Intercepto (default: 0.0)
+    
+    Returns:
+        Valor en milímetros
+    """
+    return (valor_mm - b)/a
 def model_fn(model_dir=None):
     """
     Carga los modelos necesarios para la detección de vértices y defectos
@@ -1840,10 +1865,16 @@ def read_csv_file(csv_path):
         print(f"Error leyendo CSV {csv_path}: {str(e)}")
         return []
 
+
+
 def get_parameters_from_csv(defect_type, csv_data):
     """Extrae los parámetros relevantes para un tipo de defecto desde el CSV y selecciona el registro con valores más altos"""
     if not csv_data or len(csv_data) == 0:
         return {}
+    
+    # Parámetros para la conversión de píxeles a mm
+    a = 1.0  # Pendiente
+    b = 0.0  # Intercepto
     
     # Para muchos tipos de defectos, queremos encontrar el caso más severo
     if defect_type in ['grietas_diagonales', 'grietas_corner', 'grietas_medio_camino']:
@@ -1860,14 +1891,15 @@ def get_parameters_from_csv(defect_type, csv_data):
                 max_index = i
         
         row = max_length_row
+        # Convertir valores de píxeles a mm con la regresión lineal
         return {
-            "longitud_mm": float(row.get('L', 0)) if 'L' in row else 0,
-            "distancia_a_superficie_mm": float(row.get('D', 0)) if 'D' in row else 0,
-            "espesor_mm": float(row.get('e', 0)) if 'e' in row else 0,
+            "longitud_mm": px_a_mm(float(row.get('L', 0)) if 'L' in row else 0, a, b),
+            "distancia_a_superficie_mm": px_a_mm(float(row.get('D', 0)) if 'D' in row else 0, a, b),
+            "espesor_mm": px_a_mm(float(row.get('e', 0)) if 'e' in row else 0, a, b),
             "_id_relevante": max_index + 1  # Guardamos el índice relevante (+1 porque los índices empiezan en 0)
         }
     elif defect_type == 'inclusion_no_metalica':
-        # Buscar la inclusión con mayor concentración
+        # Para inclusion_no_metalica NO se convierte a mm
         max_conc_row = csv_data[0]
         max_conc = float(max_conc_row.get('concentracion', 0)) if 'concentracion' in max_conc_row else 0
         max_index = 0  # Índice de la inclusión más relevante
@@ -1900,7 +1932,7 @@ def get_parameters_from_csv(defect_type, csv_data):
         
         row = min_area_row
         return {
-            "diametro": float(row.get('diametro', 0)) if 'diametro' in row else 0,
+            "diametro_mm": px_a_mm(float(row.get('diametro', 0)) if 'diametro' in row else 0, a, b),
             "porcentaje_area": float(row.get('porcentaje_area', 0)) if 'porcentaje_area' in row else 0,
             "_id_relevante": min_index + 1  # Guardamos el índice relevante
         }
@@ -1919,20 +1951,20 @@ def get_parameters_from_csv(defect_type, csv_data):
         
         row = max_diam_row
         return {
-            "diametro": float(row.get('diametro', 0)) if 'diametro' in row else 0,
+            "diametro_mm": px_a_mm(float(row.get('diametro', 0)) if 'diametro' in row else 0, a, b),
             "_id_relevante": max_index + 1  # Guardamos el índice relevante
         }
     elif defect_type == 'romboidad':
         # Para romboidad, normalmente solo hay un registro
         row = csv_data[0]
         return {
-            "diagonal_mayor": float(row.get('Diagonal_Mayor_D(px)', 0)) if 'Diagonal_Mayor_D(px)' in row else 0,
-            "diagonal_menor": float(row.get('Diagonal_Menor_d(px)', 0)) if 'Diagonal_Menor_d(px)' in row else 0,
-            "diferencia": float(row.get('Diferencia(px)', 0)) if 'Diferencia(px)' in row else 0,
+            "diagonal_mayor_mm": px_a_mm(float(row.get('Diagonal_Mayor_D(px)', 0)) if 'Diagonal_Mayor_D(px)' in row else 0, a, b),
+            "diagonal_menor_mm": px_a_mm(float(row.get('Diagonal_Menor_d(px)', 0)) if 'Diagonal_Menor_d(px)' in row else 0, a, b),
+            "diferencia_mm": px_a_mm(float(row.get('Diferencia(px)', 0)) if 'Diferencia(px)' in row else 0, a, b),
             "_id_relevante": 1  # Siempre el primero para romboidad
         }
     elif defect_type == 'abombamiento':
-        # Para abombamiento, procesar los valores de I, M, T
+        # Para abombamiento, procesar los valores
         abomb_values = {}
         
         # Extraer valores para I, M, T de los registros disponibles
@@ -1949,6 +1981,8 @@ def get_parameters_from_csv(defect_type, csv_data):
                     abomb_values['M'] = float(r.get('Abombamiento_Porcentaje', 0)) if 'Abombamiento_Porcentaje' in r else 0
                 elif idx == 2:
                     abomb_values['T'] = float(r.get('Abombamiento_Porcentaje', 0)) if 'Abombamiento_Porcentaje' in r else 0
+        
+        # Aquí no convertimos los porcentajes a mm, ya que son porcentajes
         
         # También incluimos información de lado si está disponible
         for idx, r in enumerate(csv_data):
@@ -1989,9 +2023,9 @@ def get_parameters_from_csv(defect_type, csv_data):
         
         row = max_severity_row
         return {
-            "longitud_mm": float(row.get('L', 0)) if 'L' in row else 0,
-            "distancia_a_superficie_mm": float(row.get('D', 0)) if 'D' in row else 0,
-            "area": float(row.get('area', 0)) if 'area' in row else 0,
+            "longitud_mm": px_a_mm(float(row.get('L', 0)) if 'L' in row else 0, a, b),
+            "distancia_a_superficie_mm": px_a_mm(float(row.get('D', 0)) if 'D' in row else 0, a, b),
+            "area_mm2": px_a_mm(float(row.get('area', 0)) if 'area' in row else 0, a, b),  # Convertir área
             "lado": row.get('lado', '') if 'lado' in row else '',
             "direccion": row.get('direccion', '') if 'direccion' in row else '',
             "_id_relevante": max_index + 1  # Guardamos el índice relevante
@@ -2002,26 +2036,41 @@ def get_parameters_from_csv(defect_type, csv_data):
         
         # Extraer medidas horizontales (H_I, H_M, H_F)
         for pos in ['I', 'M', 'F']:
-            h_key = f"{pos}_horizontal_px"  # Cambiado de _mm a _px
+            h_key = f"{pos}_horizontal_px"
             if h_key in csv_data[0]:
-                imf_values[h_key] = float(csv_data[0].get(h_key, 0))
+                # Convertir a mm
+                imf_values[f"{pos}_horizontal_mm"] = px_a_mm(float(csv_data[0].get(h_key, 0)), a, b)
                 
         # Extraer medidas verticales (V_I, V_M, V_F)
         for pos in ['I', 'M', 'F']:
-            v_key = f"{pos}_vertical_px"  # Cambiado de _mm a _px
+            v_key = f"{pos}_vertical_px"
             if v_key in csv_data[0]:
-                imf_values[v_key] = float(csv_data[0].get(v_key, 0))
+                # Convertir a mm
+                imf_values[f"{pos}_vertical_mm"] = px_a_mm(float(csv_data[0].get(v_key, 0)), a, b)
         
         # Extraer dimensiones totales
-        if 'ancho_px' in csv_data[0]:  # Cambiado de ancho_mm a ancho_px
-            imf_values['ancho_px'] = float(csv_data[0].get('ancho_px', 0))
-        if 'alto_px' in csv_data[0]:  # Cambiado de alto_mm a alto_px
-            imf_values['alto_px'] = float(csv_data[0].get('alto_px', 0))
+        if 'ancho_px' in csv_data[0]:
+            imf_values['ancho_mm'] = px_a_mm(float(csv_data[0].get('ancho_px', 0)), a, b)
+        if 'alto_px' in csv_data[0]:
+            imf_values['alto_mm'] = px_a_mm(float(csv_data[0].get('alto_px', 0)), a, b)
         
         imf_values['_id_relevante'] = 1  # Siempre el primero para IMF
         return imf_values
-    # Si no hay mapeo específico, devolver todo el primer registro
-    return {k: v for k, v in csv_data[0].items() if k != 'id' and k != 'bbox' and k != 'conf'}
+    # Si no hay mapeo específico, devolver todo el primer registro convirtiendo todo a mm
+    result = {}
+    row = csv_data[0]
+    for k, v in row.items():
+        if k != 'id' and k != 'bbox' and k != 'conf':
+            try:
+                val = float(v)
+                # Convertir a mm cualquier valor numérico excepto para inclusiones no metálicas
+                if defect_type != 'inclusion_no_metalica' and 'porcentaje' not in k.lower():
+                    result[k + '_mm'] = px_a_mm(val, a, b)
+                else:
+                    result[k] = val
+            except (ValueError, TypeError):
+                result[k] = v
+    return result
 
 def get_etiqueta_info(root_dir):
     """Extrae información de la etiqueta (código, calidad, línea) si está disponible"""
