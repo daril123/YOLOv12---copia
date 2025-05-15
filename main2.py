@@ -56,7 +56,7 @@ from defects.sopladura.processor import SopladuraProcessor
 from defects.abombamiento.processor import AbombamientoProcessor
 from defects.romboidad.processor import RomboidadProcessor
 from defects.etiqueta.label_extractor import LabelExtractor
-
+from defects.imf.processor import IMFProcessor
 # Configuración y variables de entorno para Greengrass
 topic_read = os.getenv("TOPIC_READ", "PACC/Imagenes")
 topic_write = os.getenv("TOPIC_WRITE", "PACC/Resultados")
