@@ -1008,7 +1008,6 @@ def predict_fn(input_data, models, output_dir=None, log_path=None):
     classified_detections = classify_defects_with_masks(detections, zone_masks, image, yolo_result, class_mapping)
     
     # 10. Procesar romboidad (el abombamiento ya se procesó antes de la rotación)
-    # MODIFICACIÓN: No volver a procesar abombamiento, usar los resultados originales
     romboidad_processor = models['processors']['romboidad']
     romboidad_results = romboidad_processor.process(
         image,  # imagen ya está rotada
@@ -1016,10 +1015,37 @@ def predict_fn(input_data, models, output_dir=None, log_path=None):
         image_name=image_name,
         output_dir=output_dir
     )
-    
+
+    # 10.5 NUEVO: Procesar análisis IMF (Inicial-Medio-Final)
+    print("Procesando análisis IMF (Inicial-Medio-Final)...")
+    try:
+        imf_processor = models['processors']['imf']
+        
+        # Necesitamos obtener el contorno_principal para el procesamiento IMF
+        contornos, _ = cv2.findContours(palanquilla_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contorno_principal = max(contornos, key=cv2.contourArea) if contornos else None
+        
+        if contorno_principal is not None:
+            imf_results = imf_processor.process(
+                image,  # imagen ya está rotada
+                contorno_principal,  # contorno principal de la palanquilla
+                mask=palanquilla_mask,  # máscara de la palanquilla
+                image_name=image_name,
+                output_dir=output_dir
+            )
+            print("Análisis IMF completado exitosamente.")
+        else:
+            print("Error: No se pudo obtener el contorno principal para análisis IMF.")
+            imf_results = None
+    except Exception as e:
+        print(f"Error en el procesamiento IMF: {e}")
+        import traceback
+        traceback.print_exc()
+        imf_results = None
+
     # 11. Procesar cada tipo de defecto
     results = {}
-    
+
     # MODIFICADO: Usar los resultados de abombamiento obtenidos ANTES de la rotación
     print("Usando resultados de abombamiento pre-rotación...")
     results['abombamiento'] = {
@@ -1027,8 +1053,12 @@ def predict_fn(input_data, models, output_dir=None, log_path=None):
         'visualizations': abombamiento_viz_original,
         'report_paths': abombamiento_reports_original
     }
-    
+
     results['romboidad'] = romboidad_results
+
+    # NUEVO: Añadir resultados IMF
+    if imf_results:
+        results['imf'] = imf_results
     
     # MODIFICACIÓN: Procesar todos los tipos de defectos con la imagen rotada
     for defect_type, defects in classified_detections.items():
@@ -1554,7 +1584,7 @@ def output_fn(prediction_results, output_dir, input_data):
         os.makedirs(defect_dir, exist_ok=True)
         
         # Tratamiento especial para defectos de análisis geométrico que no requieren consolidación
-        if defect_type in ['abombamiento', 'romboidad']:
+        if defect_type in ['abombamiento', 'romboidad', 'imf']:
             # Mantener comportamiento existente para estos tipos
             if defect_type in processed_results and 'visualizations' in processed_results[defect_type]:
                 visualizations = processed_results[defect_type]['visualizations']
@@ -1966,7 +1996,30 @@ def get_parameters_from_csv(defect_type, csv_data):
             "direccion": row.get('direccion', '') if 'direccion' in row else '',
             "_id_relevante": max_index + 1  # Guardamos el índice relevante
         }
-    
+    elif defect_type == 'imf':
+        # Para IMF, extraer medidas horizontales y verticales
+        imf_values = {}
+        
+        # Extraer medidas horizontales (H_I, H_M, H_F)
+        for pos in ['I', 'M', 'F']:
+            h_key = f"H_{pos}_mm"
+            if h_key in csv_data[0]:
+                imf_values[h_key] = float(csv_data[0].get(h_key, 0))
+                
+        # Extraer medidas verticales (V_I, V_M, V_F)
+        for pos in ['I', 'M', 'F']:
+            v_key = f"V_{pos}_mm"
+            if v_key in csv_data[0]:
+                imf_values[v_key] = float(csv_data[0].get(v_key, 0))
+        
+        # Extraer dimensiones totales
+        if 'ancho_mm' in csv_data[0]:
+            imf_values['ancho_mm'] = float(csv_data[0].get('ancho_mm', 0))
+        if 'alto_mm' in csv_data[0]:
+            imf_values['alto_mm'] = float(csv_data[0].get('alto_mm', 0))
+        
+        imf_values['_id_relevante'] = 1  # Siempre el primero para IMF
+        return imf_values
     # Si no hay mapeo específico, devolver todo el primer registro
     return {k: v for k, v in csv_data[0].items() if k != 'id' and k != 'bbox' and k != 'conf'}
 
@@ -2013,10 +2066,11 @@ def generate_json(root_dir):
         result["general"]["nombre"] = f"PALANQUILLA {etiqueta_info['codigo']}"
     
     # Tipos de defectos a buscar
+    # Tipos de defectos a buscar
     defect_types = [
         'grietas_diagonales', 'grietas_corner', 'grietas_medio_camino', 
         'rechupe', 'nucleo_esponjoso', 'inclusion_no_metalica', 
-        'romboidad', 'estrella', 'abombamiento', 'sopladura'
+        'romboidad', 'estrella', 'abombamiento', 'sopladura', 'imf'  # Añadido IMF
     ]
     
     # Conteo de defectos por tipo
