@@ -378,7 +378,7 @@ def model_fn(model_dir=None):
     # Rutas predeterminadas si no se especifica un directorio
     vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Vertex\model.pt"
     defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Defect\model.pt"
-    
+    yaml_config = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\config.yaml"
     if model_dir:   
         # Si se proporciona un directorio, buscar los modelos allí
         vertex_path = os.path.join(model_dir, "modelo_1.pt")
@@ -392,20 +392,27 @@ def model_fn(model_dir=None):
     # Inicializar los detectores
     print("Cargando modelo para detección de vértices/contornos...")
     vertex_detector = VertexDetector(vertex_model_path)
-    
+    abombamiento_processor = AbombamientoProcessor()
+    vertex_detector.conf_threshold = conf_threshold_palanquilla
+    abombamiento_processor.conf_threshold = conf_threshold_palanquilla
     print("Cargando modelo para detección de defectos...")
     defect_detector = DefectDetector(defect_model_path)
-    
+    defect_detector.conf_threshold = conf_threshold_defectos
+    defect_detector.iou_threshold = iou_threshold_defectos
     # Inicializar los procesadores de defectos
     diagonal_processor = DiagonalCrackProcessor()
     midway_processor = MidwayCrackProcessor()
     corner_processor = CornerCrackProcessor()
     nucleo_processor = NucleoEsponjosoProcessor()
     inclusion_processor = InclusionNoMetalicaProcessor()
+    inclusion_processor.square_size = mm_a_px(100,a,b)
+    inclusion_processor.sensitivity = inclusion_sensitivity
     rechupe_processor = RechupeProcessor()
     estrella_processor = EstrellaProcessor()
     sopladura_processor = SopladuraProcessor()
-    abombamiento_processor = AbombamientoProcessor()
+    sopladura_processor.umbral_sopladura = umbral_sopladura
+    
+
     romboidad_processor = RomboidadProcessor()
     
     # Nuevo: inicializar el procesador IMF
@@ -664,7 +671,7 @@ def predict_fn(input_data, models, output_dir=None, log_path=None):
             image_name=image_name,
             output_dir=output_dir,
             model=vertex_detector.model,
-            conf_threshold=0.35,
+            conf_threshold=abombamiento_processor.conf_threshold,
             mask=palanquilla_mask
         )
         
@@ -1867,14 +1874,13 @@ def read_csv_file(csv_path):
 
 
 
-def get_parameters_from_csv(defect_type, csv_data):
+def get_parameters_from_csv(defect_type, csv_data,a,b):
     """Extrae los parámetros relevantes para un tipo de defecto desde el CSV y selecciona el registro con valores más altos"""
     if not csv_data or len(csv_data) == 0:
         return {}
     
     # Parámetros para la conversión de píxeles a mm
-    a = 1.0  # Pendiente
-    b = 0.0  # Intercepto
+    
     
     # Para muchos tipos de defectos, queremos encontrar el caso más severo
     if defect_type in ['grietas_diagonales', 'grietas_corner', 'grietas_medio_camino']:
@@ -2093,7 +2099,7 @@ def get_etiqueta_info(root_dir):
         "linea": row.get('line', '') if 'line' in row else ''
     }
 
-def generate_json(root_dir):
+def generate_json(root_dir,a=a,b=b):
     """Genera el JSON con la información de defectos"""
     # Obtener información de la etiqueta
     etiqueta_info = get_etiqueta_info(root_dir)
@@ -2148,7 +2154,7 @@ def generate_json(root_dir):
             defect_counts[defect_type] = num_defects
             
             # Obtener parámetros del defecto más relevante
-            params = get_parameters_from_csv(defect_type, csv_data)
+            params = get_parameters_from_csv(defect_type, csv_data,a,b)
             
             # Obtener el ID del defecto más relevante
             id_relevante = params.pop('_id_relevante', 1) if isinstance(params, dict) else 1

@@ -14,3 +14,7 @@ class InclusionNoMetalicaProcessor:
         """
         self.name = "inclusion_no_metalica"
         self.square_size = 500  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
+        
+
+    def process(self):
+        print(self.square_size)

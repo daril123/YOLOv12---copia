@@ -15,7 +15,7 @@ class SopladuraProcessor:
         Inicializa el procesador de sopladuras
         """
         self.name = "sopladura"
-    
+        self.umbral_sopladura = 22
     def determinar_lado_sopladura(self, center_point, corners):
         """
         Determina en qué lado de la palanquilla se encuentra la sopladura
@@ -458,7 +458,7 @@ class SopladuraProcessor:
             lado = sopladura['lado']
             
             # Aplicar el análisis completo de sopladuras con el lado correspondiente
-            umbral_sopladura = 21  # Umbral para mejor detección
+            umbral_sopladura = self.umbral_sopladura  # Umbral para mejor detección
             resultado = self.analisis_completo_sopladuras(roi, lado, umbral_sopladura)
             
             # Agregar datos adicionales para el reporte

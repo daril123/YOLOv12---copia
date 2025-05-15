@@ -12,8 +12,11 @@ class InclusionNoMetalicaProcessor:
         """
         Inicializa el procesador de inclusiones no metálicas
         """
+
         self.name = "inclusion_no_metalica"
-        self.square_size = 500  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
+        self.square_size = 500
+        self.sensitivity = 0.3  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
+  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
     
     def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.3, original_image=None):
         """
@@ -402,7 +405,7 @@ class InclusionNoMetalicaProcessor:
                 corners, 
                 image[y1:y2, x1:x2].copy(), 
                 (x1, y1, x2, y2), 
-                sensitivity=0.3,
+                sensitivity=self.sensitivity,
                 original_image=image  # Pasar la imagen original
             )
             

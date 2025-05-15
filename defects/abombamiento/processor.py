@@ -21,6 +21,7 @@ class AbombamientoProcessor:
         Inicializa el procesador de abombamiento
         """
         self.name = "abombamiento"
+        self.conf_threshold = 0.35
     
     def measure_abombamiento(self, image, corners, contorno_principal=None, mask=None, factor_mm_px=1.0):
         """
