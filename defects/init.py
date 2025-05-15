@@ -9,6 +9,7 @@ from .estrella.processor import EstrellaProcessor
 from .sopladura.processor import SopladuraProcessor
 from .romboidad.processor import RomboidadProcessor
 from .abombamiento.processor import AbombamientoProcessor
+from .imf.processor import IMFProcessor  # Nueva importación para IMF
 
 __all__ = [
     'DiagonalCrackProcessor',
@@ -20,5 +21,6 @@ __all__ = [
     'EstrellaProcessor',
     'SopladuraProcessor',
     'RomboidadProcessor',
-    'AbombamientoProcessor'
+    'AbombamientoProcessor',
+    'IMFProcessor'  # Añadir a la lista de exportación
 ]

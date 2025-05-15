@@ -383,6 +383,9 @@ def model_fn(model_dir=None):
     abombamiento_processor = AbombamientoProcessor()
     romboidad_processor = RomboidadProcessor()
     
+    # Nuevo: inicializar el procesador IMF
+    imf_processor = IMFProcessor()
+    
     # Nuevo: Inicializar el procesador de etiquetas
     print("Inicializando procesador de etiquetas...")
     label_extractor = LabelExtractor()
@@ -412,7 +415,8 @@ def model_fn(model_dir=None):
             'sopladura': sopladura_processor,
             'abombamiento': abombamiento_processor,
             'romboidad': romboidad_processor,
-            'etiqueta': label_extractor  # Nuevo: Procesador de etiquetas
+            'etiqueta': label_extractor,
+            'imf': imf_processor  # Añadir el procesador IMF
         }
     }
 
