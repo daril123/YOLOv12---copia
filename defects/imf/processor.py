@@ -386,16 +386,16 @@ class IMFProcessor:
             
             f.write("MEDIDAS HORIZONTALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"H_{pos}_px"
-                key_mm = f"H_{pos}_mm"
+                key_px = f"{pos}_horizontal_px"
+                key_mm = f"{pos}_horizontal_mm"
                 if key_px in horizontal_data and key_mm in horizontal_data:
                     f.write(f"  Línea H-{pos}: {horizontal_data[key_px]:.1f} px ({horizontal_data[key_mm]:.1f} mm)\n")
             f.write("\n")
             
             f.write("MEDIDAS VERTICALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"V_{pos}_px"
-                key_mm = f"V_{pos}_mm"
+                key_px = f"{pos}_vertical_px"
+                key_mm = f"{pos}_vertical_mm"
                 if key_px in vertical_data and key_mm in vertical_data:
                     f.write(f"  Línea V-{pos}: {vertical_data[key_px]:.1f} px ({vertical_data[key_mm]:.1f} mm)\n")
             f.write("\n")
