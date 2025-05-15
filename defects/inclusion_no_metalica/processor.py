@@ -16,9 +16,9 @@ class InclusionNoMetalicaProcessor:
         self.name = "inclusion_no_metalica"
         self.square_size = 500
         self.sensitivity = 0.3  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
-  # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
+        # Tamaño fijo del cuadrado de análisis (500x500 píxeles)
     
-    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, sensitivity=0.3, original_image=None):
+    def measure_inclusion(self, inclusion_mask, corners=None, inclusion_img=None, bbox=None, original_image=None):
         """
         Analiza inclusiones no metálicas contando el número de puntos/inclusiones 
         SOLAMENTE dentro de la intersección entre la máscara y un cuadrado de 500x500
@@ -29,7 +29,7 @@ class InclusionNoMetalicaProcessor:
             corners: Esquinas de la palanquilla [top-left, top-right, bottom-right, bottom-left] en coordenadas globales
             inclusion_img: Imagen recortada de la región (opcional, para visualizaciones)
             bbox: Bounding box de la región en coordenadas globales (x1, y1, x2, y2)
-            sensitivity: Valor entre 0 y 1 que controla la sensibilidad de detección (0: menos sensible, 1: más sensible)
+            self.sensitivity: Valor entre 0 y 1 que controla la sensibilidad de detección (0: menos sensible, 1: más sensible)
             original_image: Imagen original completa
                 
         Returns:
@@ -106,12 +106,12 @@ class InclusionNoMetalicaProcessor:
                 
                 # AJUSTE DE SENSIBILIDAD: Calibrar parámetros según la sensibilidad
                 # BlockSize: Tamaño de la ventana de adaptación (mayor = menos sensible)
-                block_size = int(21 - 12 * sensitivity)  # Rango: 9-21 (menor = más sensible)
+                block_size = int(21 - 12 * float(self.sensitivity))  # Rango: 9-21 (menor = más sensible)
                 block_size = max(9, block_size)  # Mínimo 9
                 block_size = block_size if block_size % 2 == 1 else block_size + 1  # Debe ser impar
                 
                 # Valor C: Constante de umbral (mayor = menos sensible)
-                c_value = int(8 - 6 * sensitivity)  # Rango: 2-8
+                c_value = int(8 - 6 * float(self.sensitivity))  # Rango: 2-8
                 c_value = max(2, c_value)  # Mínimo 2
                 
                 # Usar un umbral adaptativo ajustado
@@ -129,7 +129,7 @@ class InclusionNoMetalicaProcessor:
                 contours, _ = cv2.findContours(opening, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
                 # AJUSTE DE SENSIBILIDAD: Área mínima según sensibilidad
-                min_area = int(12 - 8 * sensitivity)  # Rango: 4-12 píxeles
+                min_area = int(12 - 8 * float(self.sensitivity))  # Rango: 4-12 píxeles
                 min_area = max(4, min_area)  # Mínimo 4
                 valid_contours = [c for c in contours if cv2.contourArea(c) >= min_area]
                 
@@ -150,7 +150,7 @@ class InclusionNoMetalicaProcessor:
                     if env_mean > 0:
                         contrast = (env_mean - mean_value) / env_mean
                         # Umbral de contraste ajustado según sensibilidad
-                        contrast_threshold = 0.04 + (0.08 * (1 - sensitivity))  # Rango: 0.04-0.12
+                        contrast_threshold = 0.04 + (0.08 * (1 - float(self.sensitivity)))  # Rango: 0.04-0.12
                         if contrast > contrast_threshold:
                             filtered_contours.append(contour)
                     else:
@@ -404,8 +404,7 @@ class InclusionNoMetalicaProcessor:
                 inclusion_mask, 
                 corners, 
                 image[y1:y2, x1:x2].copy(), 
-                (x1, y1, x2, y2), 
-                sensitivity=self.sensitivity,
+                (x1, y1, x2, y2),                 
                 original_image=image  # Pasar la imagen original
             )
             

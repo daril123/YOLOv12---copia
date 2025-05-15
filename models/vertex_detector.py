@@ -66,7 +66,7 @@ class VertexDetector:
         print(f"Usando dispositivo: {self.device}")
         
         # Umbrales para detección (reducidos para mejorar la detección)
-        self.conf_threshold = 0.35
+        self.conf_threshold = 0.95
         self.padding = 20  # Margen para la imagen
         self.color = (255, 255, 255)  # Color blanco
         

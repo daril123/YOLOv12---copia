@@ -310,7 +310,7 @@ def on_stream_event(event: SubscriptionResponseMessage, models, ipc_client) -> N
                 input_data = input_fn(ruta, log_path)
                 prediction_results = predict_fn(input_data, models, workdir, log_path)
                 output_fn(prediction_results, workdir, input_data)
-                defect_json = generate_json(os.path.join(workdir, basename))
+                defect_json = generate_json(os.path.join(workdir, basename,a,b))
                 msg_excel = {
                     "ruta_archivos": os.path.join(workdir, basename),
                     "ruta_excel": os.path.dirname(log_path),
@@ -374,20 +374,63 @@ def model_fn(model_dir=None):
     Returns:
         Dictionary con los modelos cargados
     """
+    # Variables por defecto para los parámetros
+    conf_threshold_palanquilla = 0.35
+    conf_threshold_defectos = 0.2
+    iou_threshold_defectos = 0.6
+    a = 1.0
+    b = 0.0
+    inclusion_sensitivity = 0.3
+    umbral_sopladura = 21
     
     # Rutas predeterminadas si no se especifica un directorio
     vertex_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Vertex\model.pt"
     defect_model_path = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\Defect\model.pt"
     yaml_config = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\Models\config.yaml"
+    
     if model_dir:   
         # Si se proporciona un directorio, buscar los modelos allí
         vertex_path = os.path.join(model_dir, "modelo_1.pt")
         defect_path = os.path.join(model_dir, "modelo_2.pt")
+        config_path = os.path.join(model_dir, "config.yaml")
 
         if os.path.exists(vertex_path):
             vertex_model_path = vertex_path
         if os.path.exists(defect_path):
             defect_model_path = defect_path
+        if os.path.exists(config_path):
+            yaml_config = config_path
+    
+    # Leer el archivo de configuración YAML
+    print(f"Cargando archivo de configuración YAML: {yaml_config}")
+    try:
+        import yaml
+        if os.path.exists(yaml_config):
+            with open(yaml_config, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                
+                # Extraer parámetros del YAML
+                conf_threshold_palanquilla = config.get('conf_threshold_palanquilla', conf_threshold_palanquilla)
+                conf_threshold_defectos = config.get('conf_threshold_defectos', conf_threshold_defectos)
+                iou_threshold_defectos = config.get('iou_threshold_defectos', iou_threshold_defectos)
+                a = config.get('a', a)
+                b = config.get('b', b)
+                inclusion_sensitivity = config.get('inclusion_sensitivity', inclusion_sensitivity)
+                umbral_sopladura = config.get('umbral_sopladura', umbral_sopladura)
+                
+                print(f"Configuración cargada exitosamente:")
+                print(f"  - conf_threshold_palanquilla: {conf_threshold_palanquilla}")
+                print(f"  - conf_threshold_defectos: {conf_threshold_defectos}")
+                print(f"  - iou_threshold_defectos: {iou_threshold_defectos}")
+                print(f"  - a (regresión lineal): {a}")
+                print(f"  - b (regresión lineal): {b}")
+                print(f"  - inclusion_sensitivity: {inclusion_sensitivity}")
+                print(f"  - umbral_sopladura: {umbral_sopladura}")
+        else:
+            print(f"Advertencia: El archivo de configuración {yaml_config} no existe. Usando valores por defecto.")
+    except Exception as e:
+        print(f"Error al cargar el archivo de configuración YAML: {e}")
+        print("Usando valores por defecto.")
     
     # Inicializar los detectores
     print("Cargando modelo para detección de vértices/contornos...")
@@ -399,13 +442,14 @@ def model_fn(model_dir=None):
     defect_detector = DefectDetector(defect_model_path)
     defect_detector.conf_threshold = conf_threshold_defectos
     defect_detector.iou_threshold = iou_threshold_defectos
+    
     # Inicializar los procesadores de defectos
     diagonal_processor = DiagonalCrackProcessor()
     midway_processor = MidwayCrackProcessor()
     corner_processor = CornerCrackProcessor()
     nucleo_processor = NucleoEsponjosoProcessor()
     inclusion_processor = InclusionNoMetalicaProcessor()
-    inclusion_processor.square_size = mm_a_px(100,a,b)
+    inclusion_processor.square_size = mm_a_px(100, a, b)
     inclusion_processor.sensitivity = inclusion_sensitivity
     rechupe_processor = RechupeProcessor()
     estrella_processor = EstrellaProcessor()
@@ -450,7 +494,7 @@ def model_fn(model_dir=None):
             'etiqueta': label_extractor,
             'imf': imf_processor  # Añadir el procesador IMF
         }
-    }
+    },a,b
 
 
 def input_fn(image_path, log_path=None):
@@ -1875,6 +1919,12 @@ def read_csv_file(csv_path):
 
 
 def get_parameters_from_csv(defect_type, csv_data,a,b):
+    
+    
+    
+    
+    
+    
     """Extrae los parámetros relevantes para un tipo de defecto desde el CSV y selecciona el registro con valores más altos"""
     if not csv_data or len(csv_data) == 0:
         return {}
@@ -2099,7 +2149,7 @@ def get_etiqueta_info(root_dir):
         "linea": row.get('line', '') if 'line' in row else ''
     }
 
-def generate_json(root_dir,a=a,b=b):
+def generate_json(root_dir,a,b):
     """Genera el JSON con la información de defectos"""
     # Obtener información de la etiqueta
     etiqueta_info = get_etiqueta_info(root_dir)
@@ -2269,7 +2319,7 @@ def main():
     )
     
     logging.info("Cargando modelos...")
-    models = model_fn()
+    models,a,b = model_fn()
     logging.info("Modelos cargados exitosamente!")
     logging.info(f"Suscribiéndose al tópico: {topic_read}...")
     ipc_client_subscribe = GreengrassCoreIPCClientV2()
@@ -2279,7 +2329,7 @@ def main():
         # Usar la firma correcta del SDK
         _, operation = ipc_client_subscribe.subscribe_to_topic(
             topic=topic_read,
-            on_stream_event=lambda x: on_stream_event(x, models, ipc_client_publish),
+            on_stream_event=lambda x: on_stream_event(x, models, ipc_client_publish,a,b),
             on_stream_error=on_stream_error,
             on_stream_closed=on_stream_closed
         )
@@ -2303,8 +2353,9 @@ if __name__ == "__main__":
     # en lugar de entrar al modo interactivo, descomentar y ejecutar estas líneas:
     
     # Cargar modelos
-    models = model_fn()
-    
+    models,a,b = model_fn()
+    a = float(a)
+    b = float(b)
     # Usar la misma ruta que en paste-2.txt
     ruta = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\pruebas diagonales\DSC00002.JPG"
     filename = os.path.basename(ruta)
@@ -2320,7 +2371,7 @@ if __name__ == "__main__":
         input_data = input_fn(ruta, log_path)
         prediction_results = predict_fn(input_data, models, workdir, log_path)
         output_fn(prediction_results, workdir, input_data)
-        defect_json = generate_json(os.path.join(workdir, basename))
+        defect_json = generate_json(os.path.join(workdir, basename,a,b))
         
         # Crear el mensaje de resultados (como en paste-2.txt)
         msg_excel = {
