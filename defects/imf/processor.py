@@ -238,9 +238,8 @@ class IMFProcessor:
                 mid_x = int((left_point[0] + right_point[0]) / 2)
                 mid_y = int(left_point[1])  # La Y es constante para líneas horizontales
                 
-                # Texto con dimensión en píxeles y mm
-                longitud_mm = datos['longitud'] / px_per_mm_width
-                texto = f"H-{name}: {datos['longitud']:.1f} px ({longitud_mm:.1f} mm)"
+                # Texto con dimensión en píxeles
+                texto = f"H-{name}: {datos['longitud']:.1f} px"
                 
                 # Fondo para mejor visibilidad
                 text_size, _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -272,9 +271,8 @@ class IMFProcessor:
                 mid_x = int(top_point[0])  # La X es constante para líneas verticales
                 mid_y = int((top_point[1] + bottom_point[1]) / 2)
                 
-                # Texto con dimensión en píxeles y mm
-                longitud_mm = datos['longitud'] / px_per_mm_height
-                texto = f"V-{name}: {datos['longitud']:.1f} px ({longitud_mm:.1f} mm)"
+                # Texto con dimensión en píxeles
+                texto = f"V-{name}: {datos['longitud']:.1f} px"
                 
                 # Fondo para mejor visibilidad
                 text_size, _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -308,10 +306,8 @@ class IMFProcessor:
                           (x_pos - text_size[0] // 2, max_y + 30), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
         
-        # Título con dimensiones
-        width_mm = width / px_per_mm_width
-        height_mm = height / px_per_mm_height
-        titulo = f"Analisis IMF - Dimensiones: {width:.1f} x {height:.1f} px ({width_mm:.1f} x {height_mm:.1f} mm)"
+        # Título con dimensiones solo en pixeles
+        titulo = f"Analisis IMF - Dimensiones: {width:.1f} x {height:.1f} px"
         
         # Añadir título a la imagen
         cv2.putText(img_visualizacion, titulo, (10, 30), 
@@ -340,25 +336,20 @@ class IMFProcessor:
             h_data = imf_data["horizontal"][pos]
             if h_data["longitud"] is not None:
                 horizontal_data[f"H_{pos}_px"] = h_data["longitud"]
-                # Calcular en mm
-                px_per_mm_width = imf_data["rectangulo_minimo"]["px_por_mm"][0]
-                horizontal_data[f"H_{pos}_mm"] = h_data["longitud"] / px_per_mm_width
+                # Eliminar la conversión a mm
         
         vertical_data = {}
         for pos in ['I', 'M', 'F']:
             v_data = imf_data["vertical"][pos]
             if v_data["longitud"] is not None:
                 vertical_data[f"V_{pos}_px"] = v_data["longitud"]
-                # Calcular en mm
-                px_per_mm_height = imf_data["rectangulo_minimo"]["px_por_mm"][1]
-                vertical_data[f"V_{pos}_mm"] = v_data["longitud"] / px_per_mm_height
+                # Eliminar la conversión a mm
         
-        # Añadir dimensiones del rectángulo mínimo
+        # Añadir dimensiones del rectángulo mínimo (solo en píxeles)
         dimensiones = {
             "ancho_px": imf_data["rectangulo_minimo"]["tamano"][0],
             "alto_px": imf_data["rectangulo_minimo"]["tamano"][1],
-            "ancho_mm": imf_data["rectangulo_minimo"]["tamano"][0] / imf_data["rectangulo_minimo"]["px_por_mm"][0],
-            "alto_mm": imf_data["rectangulo_minimo"]["tamano"][1] / imf_data["rectangulo_minimo"]["px_por_mm"][1],
+            # Eliminar dimensiones en mm
         }
         
         # Combinar todos los datos
@@ -381,23 +372,21 @@ class IMFProcessor:
             f.write("="*60 + "\n\n")
             
             f.write("DIMENSIONES DE LA PALANQUILLA:\n")
-            f.write(f"  Ancho: {dimensiones['ancho_px']:.1f} px ({dimensiones['ancho_mm']:.1f} mm)\n")
-            f.write(f"  Alto: {dimensiones['alto_px']:.1f} px ({dimensiones['alto_mm']:.1f} mm)\n\n")
+            f.write(f"  Ancho: {dimensiones['ancho_px']:.1f} px\n")
+            f.write(f"  Alto: {dimensiones['alto_px']:.1f} px\n\n")
             
             f.write("MEDIDAS HORIZONTALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"{pos}_horizontal_px"
-                key_mm = f"{pos}_horizontal_mm"
-                if key_px in horizontal_data and key_mm in horizontal_data:
-                    f.write(f"  Línea H-{pos}: {horizontal_data[key_px]:.1f} px ({horizontal_data[key_mm]:.1f} mm)\n")
+                key_px = f"H_{pos}_px"
+                if key_px in horizontal_data:
+                    f.write(f"  Línea H-{pos}: {horizontal_data[key_px]:.1f} px\n")
             f.write("\n")
             
             f.write("MEDIDAS VERTICALES:\n")
             for pos in ['I', 'M', 'F']:
-                key_px = f"{pos}_vertical_px"
-                key_mm = f"{pos}_vertical_mm"
-                if key_px in vertical_data and key_mm in vertical_data:
-                    f.write(f"  Línea V-{pos}: {vertical_data[key_px]:.1f} px ({vertical_data[key_mm]:.1f} mm)\n")
+                key_px = f"V_{pos}_px"
+                if key_px in vertical_data:
+                    f.write(f"  Línea V-{pos}: {vertical_data[key_px]:.1f} px\n")
             f.write("\n")
             
             f.write("RELACIÓN PÍXEL/MM:\n")
