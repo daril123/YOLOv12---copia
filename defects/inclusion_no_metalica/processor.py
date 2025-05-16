@@ -166,9 +166,8 @@ class InclusionNoMetalicaProcessor:
                 num_inclusiones = len(valid_contours)
             
             # Calcular la métrica C = # / A (número de inclusiones / área intersectada)
-            metrica_C = 0
-            if area_interseccion > 0:
-                metrica_C = num_inclusiones / area_interseccion
+            
+            metrica_C = num_inclusiones / 1
             
             # Visualización
             if inclusion_img is not None:
