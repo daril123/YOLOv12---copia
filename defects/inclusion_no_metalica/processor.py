@@ -71,7 +71,10 @@ class InclusionNoMetalicaProcessor:
             y1_square = max(0, center_y - half_size)
             x2_square = min(w, center_x + half_size)
             y2_square = min(h, center_y + half_size)
-            
+            x1_square = int(x1_square)
+            y1_square = int(y1_square)
+            x2_square = int(x2_square)
+            y2_square = int(y2_square)
             # Crear máscara para el cuadrado
             square_mask = np.zeros_like(binary_mask)
             square_mask[y1_square:y2_square, x1_square:x2_square] = 255

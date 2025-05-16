@@ -310,7 +310,7 @@ def on_stream_event(event: SubscriptionResponseMessage, models, ipc_client) -> N
                 input_data = input_fn(ruta, log_path)
                 prediction_results = predict_fn(input_data, models, workdir, log_path)
                 output_fn(prediction_results, workdir, input_data)
-                defect_json = generate_json(os.path.join(workdir, basename,a,b))
+                defect_json = generate_json(os.path.join(workdir, basename), a, b)
                 msg_excel = {
                     "ruta_archivos": os.path.join(workdir, basename),
                     "ruta_excel": os.path.dirname(log_path),
@@ -2357,7 +2357,7 @@ if __name__ == "__main__":
     a = float(a)
     b = float(b)
     # Usar la misma ruta que en paste-2.txt
-    ruta = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\pruebas diagonales\DSC00002.JPG"
+    ruta = r"D:\Trabajo modelos\PACC\YOLOv12 - copia\pruebas diagonales\DSC00008.JPG"
     filename = os.path.basename(ruta)
     basename = filename.split(".")[0]
     workdir = os.getcwd()
@@ -2371,7 +2371,7 @@ if __name__ == "__main__":
         input_data = input_fn(ruta, log_path)
         prediction_results = predict_fn(input_data, models, workdir, log_path)
         output_fn(prediction_results, workdir, input_data)
-        defect_json = generate_json(os.path.join(workdir, basename,a,b))
+        defect_json = generate_json(os.path.join(workdir, basename), a, b)
         
         # Crear el mensaje de resultados (como en paste-2.txt)
         msg_excel = {
